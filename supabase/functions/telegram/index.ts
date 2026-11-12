@@ -3,7 +3,14 @@
 // Bot tokeni va maxfiy kalitlar ma'lumotlar bazasidagi tg_config jadvalida saqlanadi (telegram.sql → tg_setup).
 
 const SB_URL = Deno.env.get("SUPABASE_URL")!;
-const SB_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+function secretKey(): string {
+  const direct = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SUPABASE_SECRET_KEY");
+  if (direct) return direct;
+  const many = Deno.env.get("SUPABASE_SECRET_KEYS");
+  if (many) { try { const o = JSON.parse(many); const v = Object.values(o)[0]; if (typeof v === "string") return v; } catch { /* */ } }
+  throw new Error("Server kaliti topilmadi");
+}
+const SB_KEY = secretKey();
 
 // ---------------- Supabase REST ----------------
 function sbHeaders(extra: Record<string, string> = {}) {
