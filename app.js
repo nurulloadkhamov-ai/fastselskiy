@@ -33,7 +33,7 @@ function ls(k,v){try{if(v===undefined)return localStorage.getItem(k);if(v===null
 function clone(o){return JSON.parse(JSON.stringify(o));}
 
 /* ============ Server (Supabase RPC) ============ */
-var ERRORS={login_failed:"Login yoki parol noto'g'ri",no_session:"Sessiya tugadi, qayta kiring",not_admin:"Bu amal faqat admin uchun",not_allowed:"Bu amalga ruxsatingiz yo'q",only_today:"Faqat bugungi vazifani belgilash mumkin",wrong_password:"Eski parol noto'g'ri",short_password:"Parol kamida 6 belgidan iborat bo'lsin",bad_username:"Login 3–32 belgi: lotin harflari, raqam, . _ -",password_required:"Yangi foydalanuvchi uchun parol kiriting",cannot_delete_self:"O'zingizni o'chira olmaysiz",cannot_demote_self:"O'zingizning admin rolingizni olib tashlay olmaysiz",already_done:"Topshiriq allaqachon bajarilgan",duty_not_found:"Vazifa topilmadi",task_not_found:"Topshiriq topilmadi"};
+var ERRORS={login_failed:"Login yoki parol noto'g'ri",no_session:"Sessiya tugadi, qayta kiring",not_admin:"Bu amal faqat admin uchun",not_allowed:"Bu amalga ruxsatingiz yo'q",only_today:"Faqat bugungi vazifani belgilash mumkin",wrong_password:"Eski parol noto'g'ri",short_password:"Parol kamida 6 belgidan iborat bo'lsin",bad_username:"Login 3–32 belgi: lotin harflari, raqam, . _ -",password_required:"Yangi foydalanuvchi uchun parol kiriting",cannot_delete_self:"O'zingizni o'chira olmaysiz",cannot_demote_self:"O'zingizning admin rolingizni olib tashlay olmaysiz",empty_text:"Matn bo'sh",ticket_not_found:"Murojaat topilmadi",already_done:"Topshiriq allaqachon bajarilgan",duty_not_found:"Vazifa topilmadi",task_not_found:"Topshiriq topilmadi"};
 async function rpc(fn,args){
   var res;
   try{
@@ -105,6 +105,7 @@ async function load(silent){
     if(isAdmin()&&accounts===null){try{accounts=await rpc("list_accounts",{p_token:AUTH.token});}catch(e){accounts=[];}}
   }catch(e){if(!silent)loadErr=e.message;}
   render();
+  if(loaded&&S)loadMsgs();
 }
 function setBusy(d){busy+=d;var el=document.getElementById("savestate");if(el)el.innerHTML=saveLabel();}
 function saveLabel(){return busy?'<span class="dot" style="background:var(--brand)"></span>Saqlanmoqda…':'<span class="dot" style="background:var(--good)"></span>Saqlangan';}
@@ -185,14 +186,15 @@ var IC={
  xodimlar:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s7 2 7 6M17 11a3 3 0 1 0 0-6M22 21c0-3-2-5-5-5.5"/></svg>',
  topshiriqlar:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/></svg>',
  admin:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>',
+ xabarlar:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>',
  profil:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-7 8-7s8 3 8 7"/></svg>'
 };
 function navItems(){
   var n=[["dashboard","Dashboard"],["filiallar","Filiallar reytingi"],["ustozlar","Ustozlar"],["xodimlar","Xodimlar (Staff)"],["topshiriqlar",isAdmin()?"Topshiriqlar":"Mening topshiriqlarim"]];
   if(isAdmin())n.push(["admin","Admin panel"]);
-  n.push(["profil","Profil"]);return n;
+  n.push(["xabarlar","Xabarlar"]);n.push(["profil","Profil"]);return n;
 }
-var TITLES={dashboard:["Dashboard","Umumiy ko'rsatkichlar — bugun, "+fmtDate(todayISO())],filiallar:["Filiallar reytingi","Ustozlar ishi, xodimlar samaradorligi va o'quvchilar o'sishi asosida"],ustozlar:["Ustozlar","Dars sifati, shikoyatlar va menejer baholari"],xodimlar:["Xodimlar (Staff)","Kunlik vazifalar va samaradorlik"],topshiriqlar:["Topshiriqlar","Ustoz va xodimlarga berilgan topshiriqlar"],admin:["Admin panel","Menejer uchun boshqaruv"],profil:["Profil","Hisobingiz va parolni o'zgartirish"]};
+var TITLES={dashboard:["Dashboard","Umumiy ko'rsatkichlar — bugun, "+fmtDate(todayISO())],filiallar:["Filiallar reytingi","Ustozlar ishi, xodimlar samaradorligi va o'quvchilar o'sishi asosida"],ustozlar:["Ustozlar","Dars sifati, shikoyatlar va menejer baholari"],xodimlar:["Xodimlar (Staff)","Kunlik vazifalar va samaradorlik"],topshiriqlar:["Topshiriqlar","Ustoz va xodimlarga berilgan topshiriqlar"],admin:["Admin panel","Menejer uchun boshqaruv"],profil:["Profil","Hisobingiz va parolni o'zgartirish"],xabarlar:["Xabarlar","Menejer bilan muammo, taklif va xabarlar"]};
 
 /* ============ Grafiklar ============ */
 function lineChart(series,opts){
@@ -360,6 +362,92 @@ function viewProfile(){
    '<div class="card"><h3>Parolni o\'zgartirish</h3><form class="form" data-form="mypass"><label>Hozirgi parol<input class="in" type="password" name="old" required autocomplete="current-password"></label><label>Yangi parol (kamida 6 belgi)<input class="in" type="password" name="p" minlength="6" required autocomplete="new-password"></label><label>Yangi parolni takrorlang<input class="in" type="password" name="p2" minlength="6" required autocomplete="new-password"></label><button class="btn pri" type="submit" style="justify-self:start">O\'zgartirish</button></form></div></div>';
 }
 
+
+/* ============ Xabarlar (murojaatlar va menejer xabarlari) ============ */
+var MSG={tickets:[],anns:[]},msgLoaded=false,msgErr="";
+async function loadMsgs(){
+  if(!AUTH)return;
+  try{var r=await rpc("messages_load",{p_token:AUTH.token});MSG=r||{tickets:[],anns:[]};msgLoaded=true;msgErr="";}
+  catch(e){msgErr=/messages_load|sozlanmagan|schema cache/i.test(e.message)?"Xabarlar bo'limi hali sozlanmagan (messages.sql ishga tushirilmagan)":e.message;}
+  render();markAnnsRead();
+}
+function msgBadge(){
+  if(!msgLoaded)return 0;
+  if(isAdmin())return MSG.tickets.filter(function(t){return t.status==="yangi";}).length;
+  return MSG.anns.filter(function(a){return !a.read;}).length;
+}
+var annReadBusy=false;
+function markAnnsRead(){
+  if(annReadBusy||isAdmin()||ui.view!=="xabarlar"||ui.msgTab!=="inbox")return;
+  var ids=MSG.anns.filter(function(a){return !a.read;}).map(function(a){return a.id;});if(!ids.length)return;
+  annReadBusy=true;
+  rpc("ann_read",{p_token:AUTH.token,p_ids:ids}).then(function(){setTimeout(function(){MSG.anns.forEach(function(a){a.read=true;});render();},4000);}).catch(function(){}).finally(function(){annReadBusy=false;});
+}
+function fmtDT(ts){if(!ts)return "";var d=new Date(ts);return d.getDate()+"-"+MONTHS[d.getMonth()].toLowerCase()+" "+pad(d.getHours())+":"+pad(d.getMinutes());}
+function accName(username,role,pid){
+  if(!username)return "Anonim";
+  if(role==="teacher"){var t=byId(S.teachers,pid);if(t)return t.name+" · Ustoz, "+branchName(t.branchId);}
+  if(role==="staff"){var s=byId(S.staff,pid);if(s)return s.name+" · "+ROLES[s.role]+", "+branchName(s.branchId);}
+  if(accounts){var a=accounts.filter(function(x){return x.username===username;})[0];if(a&&a.person_id){var p=a.role==="teacher"?byId(S.teachers,a.person_id):byId(S.staff,a.person_id);if(p)return p.name;}}
+  return username;
+}
+function kindBadge(k){return k==="muammo"?'<span class="badge b-warn">Muammo</span>':'<span class="badge b-pri">Taklif</span>';}
+function tsBadge(s){return s==="hal"?'<span class="badge b-good">Hal qilindi</span>':s==="jarayonda"?'<span class="badge b-pri">Ko\'rib chiqilmoqda</span>':'<span class="badge b-warn">Yangi</span>';}
+function ticketCard(t){
+  var who=isAdmin()?(t.anon?"Anonim":accName(t.author,t.author_role,t.author_person)):"Siz";
+  var thread=t.replies.map(function(r){var mine=isAdmin()?r.from_admin:!r.from_admin;
+    return '<div style="display:flex;justify-content:'+(mine?'flex-end':'flex-start')+'"><div style="max-width:80%;background:'+(mine?'var(--brand-soft)':'var(--surface2)')+';border:1px solid var(--line);border-radius:12px;padding:8px 12px"><div class="small muted">'+(r.from_admin?"Menejer":(isAdmin()?(t.anon?"Anonim":accName(r.author,t.author_role,t.author_person)):"Siz"))+' · '+fmtDT(r.at)+'</div><div style="white-space:pre-wrap">'+esc(r.text)+'</div></div></div>';}).join("");
+  return '<div class="card" style="display:flex;flex-direction:column;gap:10px"><div class="flex between"><div class="flex">'+kindBadge(t.kind)+(t.anon?'<span class="badge b-neu">Anonim</span>':'')+tsBadge(t.status)+'</div><span class="muted small">#'+t.id+' · '+fmtDT(t.created_at)+'</span></div>'+
+    '<div><b>'+esc(who)+'</b></div><div style="white-space:pre-wrap;font-size:15px">'+esc(t.text)+'</div>'+
+    (thread?'<div style="display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line2);padding-top:10px">'+thread+'</div>':'')+
+    '<form class="flex" data-form="treply" data-id="'+t.id+'" style="align-items:flex-end"><textarea class="in" name="text" required placeholder="'+(isAdmin()?"Javob yozing…":"Qo\'shimcha yozish…")+'" style="flex:1;min-height:44px"></textarea><button class="btn pri" type="submit">Yuborish</button></form>'+
+    (isAdmin()?'<div class="flex"><span class="muted small">Holat:</span>'+[["yangi","Yangi"],["jarayonda","Ko\'rib chiqilmoqda"],["hal","Hal qilindi"]].map(function(x){return '<button class="btn sm'+(t.status===x[0]?' pri':'')+'" data-act="tStatus" data-id="'+t.id+'" data-v="'+x[0]+'">'+x[1]+'</button>';}).join("")+'</div>':'')+'</div>';
+}
+function annTargets(){
+  var o=[["all","Hammaga (ustoz va xodimlar)"],["teachers","Barcha ustozlarga"],["staff","Barcha xodimlarga"]];
+  S.branches.forEach(function(b){o.push(["branch:"+b.id,b.name+" filialiga"]);});
+  Object.keys(ROLES).forEach(function(r){o.push(["role:"+r,"Barcha "+ROLES[r]+"larga"]);});
+  (accounts||[]).filter(function(a){return a.role!=="admin";}).forEach(function(a){o.push(["user:"+a.username,"👤 "+accName(a.username,a.role,a.person_id)]);});
+  return o;
+}
+function viewMessages(){
+  if(msgErr)return '<div class="card empty">'+esc(msgErr)+'</div>';
+  if(!msgLoaded)return '<div class="card empty"><div class="spinner"></div></div>';
+  var h='';
+  if(isAdmin()){
+    var tabs=[["tickets","Murojaatlar"+(msgBadge()?" ("+msgBadge()+")":"")],["send","Xabar yuborish"]];
+    if(ui.msgTab!=="send")ui.msgTab="tickets";
+    h+='<div class="tabs">'+tabs.map(function(t){return '<button class="tab'+(ui.msgTab===t[0]?" on":"")+'" data-act="msgTab" data-id="'+t[0]+'">'+t[1]+'</button>';}).join("")+'</div>';
+    if(ui.msgTab==="tickets"){
+      var f=[["ochiq","Ochiq"],["yangi","Yangi"],["hal","Hal qilingan"],["all","Barchasi"]],k=ui.tkFilter||"ochiq";
+      var list=MSG.tickets.filter(function(t){return k==="all"||(k==="ochiq"?t.status!=="hal":t.status===k);});
+      var cnt={muammo:0,taklif:0};MSG.tickets.forEach(function(t){if(t.status!=="hal")cnt[t.kind]++;});
+      h+='<div class="grid g3">'+kpi("Yangi murojaatlar",MSG.tickets.filter(function(t){return t.status==="yangi";}).length,"Javob kutmoqda")+kpi("Ochiq muammolar",cnt.muammo,"Hal qilinmagan")+kpi("Ochiq takliflar",cnt.taklif,"Ko\'rib chiqilmagan")+'</div>';
+      h+='<div class="tabs mt">'+f.map(function(x){return '<button class="tab'+(k===x[0]?" on":"")+'" data-act="tkFilter" data-id="'+x[0]+'">'+x[1]+'</button>';}).join("")+'</div>';
+      h+=list.length?'<div class="grid g2">'+list.map(ticketCard).join("")+'</div>':'<div class="card empty">Murojaatlar yo\'q</div>';
+    } else {
+      h+='<div class="grid g21"><div class="card"><h3>Xabar yuborish</h3><p class="sub">Xabar saytda «Xabarlar» bo\'limida va Telegram botda (ulanganlarga) ko\'rinadi</p><form class="form" data-form="ann"><label>Kimga<select class="in" name="target" required>'+annTargets().map(function(o){return '<option value="'+esc(o[0])+'">'+esc(o[1])+'</option>';}).join("")+'</select></label><label>Xabar matni<textarea class="in" name="text" required style="min-height:140px" placeholder="Masalan: Ertaga soat 9:00 da umumiy majlis bo\'ladi."></textarea></label><button class="btn pri" type="submit" style="justify-self:start">Yuborish</button></form></div>'+
+        '<div class="card"><h3>Eslatma</h3><p class="sub" style="margin:0">Bitta odamga yozish uchun ro\'yxatdan uning ismini tanlang (👤). Faqat login berilgan xodimlar ro\'yxatda bo\'ladi. Har bir xabar ostida kim o\'qiganini ko\'rasiz.</p></div></div>';
+      h+='<div class="card mt"><h3>Yuborilgan xabarlar</h3>'+(MSG.anns.length?MSG.anns.map(function(a){
+        var notRead=(a.recipients||[]).filter(function(u){return (a.readers||[]).indexOf(u)<0;});
+        return '<div class="list-item"><div class="flex between"><b>'+esc(a.label)+'</b><span class="muted small">'+fmtDT(a.at)+'</span></div><div style="white-space:pre-wrap;margin:6px 0">'+esc(a.text)+'</div><details><summary class="small" style="cursor:pointer"><span class="badge '+(a.read>=a.total?"b-good":"b-neu")+'">O\'qildi: '+a.read+' / '+a.total+'</span></summary><div class="small muted" style="margin-top:6px">'+(notRead.length?"O\'qimaganlar: "+notRead.map(function(u){return esc(accName(u));}).join(", "):"Hamma o\'qidi")+'</div></details></div>';}).join(""):'<div class="empty">Hali xabar yuborilmagan</div>')+'</div>';
+    }
+    return h;
+  }
+  var unread=msgBadge();
+  var tabs2=[["write","Menejerga yozish"],["inbox","Menejerdan xabarlar"+(unread?" ("+unread+")":"")]];
+  if(ui.msgTab!=="inbox")ui.msgTab="write";
+  h+='<div class="tabs">'+tabs2.map(function(t){return '<button class="tab'+(ui.msgTab===t[0]?" on":"")+'" data-act="msgTab" data-id="'+t[0]+'">'+t[1]+'</button>';}).join("")+'</div>';
+  if(ui.msgTab==="write"){
+    h+='<div class="grid g21"><div class="card"><h3>Muammo yoki taklif yozing</h3><p class="sub">Xabaringiz to\'g\'ridan-to\'g\'ri menejerga boradi. Javob shu yerga va Telegram botga keladi.</p><form class="form" data-form="ticket"><div class="flex"><label style="flex-direction:row;align-items:center;gap:6px;font-size:14px"><input type="radio" name="kind" value="muammo" checked> Muammo</label><label style="flex-direction:row;align-items:center;gap:6px;font-size:14px"><input type="radio" name="kind" value="taklif"> Taklif</label></div><label>Matn<textarea class="in" name="text" required style="min-height:130px" placeholder="Masalan: 3-xonadagi proyektor ishlamayapti."></textarea></label><label style="flex-direction:row;align-items:center;gap:8px;font-weight:600"><input type="checkbox" name="anon"> Anonim yuborish (menejer ismingizni ko\'rmaydi)</label><button class="btn pri" type="submit" style="justify-self:start">Yuborish</button></form></div>'+
+      '<div class="card"><h3>Botdan ham yozsa bo\'ladi</h3><p class="sub" style="margin:0">Telegram botga oddiy xabar yozing — bot «Muammo» yoki «Taklif» deb so\'raydi va menejerga yuboradi. Yoki <b>/murojaat</b> buyrug\'ini bosing.</p></div></div>';
+    h+='<h3 class="mt" style="margin-bottom:12px">Mening murojaatlarim</h3>'+(MSG.tickets.length?'<div class="grid g2">'+MSG.tickets.map(ticketCard).join("")+'</div>':'<div class="card empty">Hali murojaat yozmagansiz</div>');
+  } else {
+    h+=MSG.anns.length?'<div class="grid" style="gap:12px">'+MSG.anns.map(function(a){return '<div class="card"'+(a.read?'':' style="border-color:#9DB4F5;box-shadow:0 0 0 3px var(--brand-soft)"')+'><div class="flex between"><b>Menejerdan'+(a.read?'':' <span class="badge b-pri">Yangi</span>')+'</b><span class="muted small">'+esc(a.label)+' · '+fmtDT(a.at)+'</span></div><div style="white-space:pre-wrap;margin-top:8px;font-size:15px">'+esc(a.text)+'</div></div>';}).join("")+'</div>':'<div class="card empty">Hali xabar yo\'q</div>';
+  }
+  return h;
+}
+
 /* ============ Admin panel ============ */
 function viewAdmin(){
   if(!isAdmin())return '<div class="card empty">Bu bo\'lim faqat admin uchun</div>';
@@ -451,7 +539,7 @@ function viewFirstRun(){
   if(!isAdmin())return '<div class="gate"><div class="card"><h3>Tizim hali sozlanmagan</h3><p class="sub">Admin birinchi marta kirib, ma\'lumotlarni kiritishi kerak.</p><button class="btn" data-act="logout">Chiqish</button></div></div>';
   return '<div class="gate"><div class="card" style="width:min(520px,100%)"><h3 style="font-size:19px">Xush kelibsiz! Qanday boshlaymiz?</h3><p class="sub">Tizim bo\'sh. Tanlang:</p><div class="grid" style="gap:10px"><button class="btn pri" data-act="startDemo">Demo ma\'lumotlar bilan ko\'rib chiqish</button><button class="btn" data-act="startEmpty">Bo\'sh boshlash (o\'z filiallarimni kiritaman)</button></div><p class="muted small" style="margin-top:14px">Demo ma\'lumotlarni keyin Admin panel → Sozlamalar orqali bitta tugma bilan tozalash mumkin.</p></div></div>';
 }
-function navHtml(){return navItems().map(function(n){return '<a class="nav'+(ui.view===n[0]?" on":"")+'" href="#'+n[0]+'">'+IC[n[0]]+'<span>'+n[1]+'</span></a>';}).join("");}
+function navHtml(){var bc=msgBadge();return navItems().map(function(n){return '<a class="nav'+(ui.view===n[0]?" on":"")+'" href="#'+n[0]+'">'+IC[n[0]]+'<span>'+n[1]+'</span>'+(n[0]==="xabarlar"&&bc?'<span class="badge" style="margin-left:auto;background:var(--accent);color:#1B1206">'+bc+'</span>':'')+'</a>';}).join("");}
 function render(){
   var root=document.getElementById("root");
   if(!CFG.SUPABASE_URL){root.innerHTML='<div class="gate"><div class="card">config.js topilmadi</div></div>';return;}
@@ -459,14 +547,14 @@ function render(){
   if(!loaded){root.innerHTML='<div class="gate"><div class="card" style="text-align:center">'+(loadErr?'<h3>Xatolik</h3><p class="sub">'+esc(loadErr)+'</p><div class="flex" style="justify-content:center"><button class="btn pri" data-act="reload">Qayta urinish</button><button class="btn" data-act="logout">Chiqish</button></div>':'<div class="spinner"></div><p class="muted small">Yuklanmoqda…</p>')+'</div></div>';return;}
   if(!S){root.innerHTML=viewFirstRun();return;}
   var allowed=navItems().map(function(n){return n[0];});if(allowed.indexOf(ui.view)<0)ui.view="dashboard";
-  var t=TITLES[ui.view],body={dashboard:viewDashboard,filiallar:viewBranches,ustozlar:viewTeachers,xodimlar:viewStaff,topshiriqlar:viewTasks,admin:viewAdmin,profil:viewProfile}[ui.view];
+  var t=TITLES[ui.view],body={dashboard:viewDashboard,filiallar:viewBranches,ustozlar:viewTeachers,xodimlar:viewStaff,topshiriqlar:viewTasks,admin:viewAdmin,profil:viewProfile,xabarlar:viewMessages}[ui.view];
   var scrollY=window.scrollY,active=document.activeElement,activeModel=active&&active.getAttribute&&active.getAttribute("data-model"),selStart=active&&active.selectionStart;
   var p=myPerson();
   root.innerHTML='<div class="mobile-nav">'+navHtml()+'</div><div class="app"><aside class="side"><div class="logo"><div class="logo-mark">F</div><div><b>Fast Education</b><span>Adolatli baholash tizimi</span></div></div>'+navHtml()+'<div class="userbox"><b>'+esc(p?p.name:me().username)+'</b>'+ACC_ROLES[me().role]+'<br><button class="btn sm" data-act="logout">Chiqish</button></div></aside><main class="main"><div class="top"><div><h1>'+t[0]+'</h1><p>'+t[1]+'</p></div><span class="pill" id="savestate">'+saveLabel()+'</span></div>'+body()+'</main></div>'+(ui.drawer?'<div class="drawer-bg" data-act="closeDrawerBg"><div class="drawer">'+teacherDrawer(ui.drawer)+'</div></div>':'');
   window.scrollTo(0,scrollY);
   if(activeModel){var el=document.querySelector('[data-model="'+activeModel+'"]');if(el&&el.tagName==="INPUT"&&el.type==="text"){el.focus();try{el.setSelectionRange(selStart,selStart);}catch(e){}}}
 }
-function route(){var h=(location.hash||"").replace("#","");ui.view=TITLES[h]?h:"dashboard";ui.drawer=null;render();window.scrollTo(0,0);}
+function route(){var h=(location.hash||"").replace("#","");ui.view=TITLES[h]?h:"dashboard";ui.drawer=null;render();window.scrollTo(0,0);markAnnsRead();}
 window.addEventListener("hashchange",route);
 
 /* ============ Hodisalar ============ */
@@ -502,6 +590,9 @@ document.addEventListener("click",function(e){
     rpc("tick",{p_token:AUTH.token,p_day:date,p_duty_id:id}).then(function(r){if(r.log)LOGS[key]=r.log;else delete LOGS[key];if(r.log&&r.log.s==="l"&&!isAdmin())toast("Belgilandi — kechikish bilan ("+r.log.at+")");}).catch(function(err){toast(err.message,true);}).finally(function(){setBusy(-1);render();});
     return;
   }
+  if(a==="msgTab"){ui.msgTab=id;render();markAnnsRead();return;}
+  if(a==="tkFilter"){ui.tkFilter=id;render();return;}
+  if(a==="tStatus"){setBusy(1);rpc("ticket_status",{p_token:AUTH.token,p_ticket:+id,p_status:el.getAttribute("data-v")}).then(function(){toast("Holat yangilandi");return loadMsgs();}).catch(function(err){toast(err.message,true);}).finally(function(){setBusy(-1);});return;}
   if(a==="tgLink"){ui.tgErr="";rpc("tg_link_code",{p_token:AUTH.token}).then(function(r){if(!r.bot){ui.tgErr="Bot hali sozlanmagan — menejerga ayting";}else{ui.tgLink="https://t.me/"+r.bot+"?start="+r.code;}render();}).catch(function(err){ui.tgErr=/tg_link_code|schema cache|sozlanmagan/i.test(err.message)?"Bot hali sozlanmagan — menejerga ayting":err.message;render();});return;}
   if(a==="tgUnlink"){rpc("tg_unlink",{p_token:AUTH.token}).then(function(){ui.tgLink="";toast("Telegram uzildi");render();}).catch(function(err){toast(err.message,true);});return;}
   if(a==="taskSt"){var st=el.getAttribute("data-v");setBusy(1);
@@ -544,6 +635,17 @@ document.addEventListener("submit",async function(e){
     if(btn)btn.disabled=true;
     try{var r=await rpc("login",{p_username:g("u"),p_password:fd.get("p")});AUTH={token:r.token,username:r.username,role:r.role,person_id:r.person_id};ls("fe_auth",JSON.stringify(AUTH));ui.loginErr="";accounts=null;render();await load();}
     catch(err){ui.loginErr=err.message;render();}
+    return;
+  }
+  if(kind==="ticket"||kind==="treply"||kind==="ann"){
+    if(btn)btn.disabled=true;setBusy(1);
+    try{
+      if(kind==="ticket"){await rpc("ticket_create",{p_token:AUTH.token,p_kind:g("kind"),p_text:g("text"),p_anon:!!fd.get("anon")});toast("Menejerga yuborildi");}
+      else if(kind==="treply"){await rpc("ticket_reply",{p_token:AUTH.token,p_ticket:+f.getAttribute("data-id"),p_text:g("text")});toast("Yuborildi");}
+      else {var sel=f.querySelector("select[name=target]");var lbl=sel.options[sel.selectedIndex].text.replace(/^👤 /,"");var r=await rpc("ann_send",{p_token:AUTH.token,p_target:g("target"),p_label:lbl,p_text:g("text")});toast("Yuborildi: "+r.count+" kishiga");}
+      f.reset();await loadMsgs();
+    }catch(err){toast(err.code==="no_recipients"?"Bu guruhda login berilgan odam yo'q":err.message,true);}
+    finally{setBusy(-1);if(btn)btn.disabled=false;}
     return;
   }
   if(kind==="mypass"){

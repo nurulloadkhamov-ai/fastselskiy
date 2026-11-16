@@ -236,10 +236,124 @@ function adminSummary(c: Ctx, title: string) {
 function assignee(c: Ctx, k: any) { const p = k.type === "teacher" ? byId(c.S.teachers, k.assigneeId) : byId(c.S.staff, k.assigneeId); return p ? p.name : "—"; }
 function personOf(c: Ctx, a: any) { return a.role === "teacher" ? byId(c.S.teachers, a.person_id) : a.role === "staff" ? byId(c.S.staff, a.person_id) : null; }
 function helpText(role: string) {
-  const common = "/reyting — ustozlar va filiallar reytingi\n/chiqish — Telegramni hisobdan uzish";
-  if (role === "admin") return "Buyruqlar:\n/hisobot — bugungi umumiy hisobot\n/xodimlar — xodimlar samaradorligi\n/ustoz <i>ism</i> — ustoz haqida to‘liq ma’lumot\n/shikoyatlar — ko‘rib chiqilmagan shikoyatlar\n/topshiriqlar — muddati o‘tgan topshiriqlar\n" + common;
-  if (role === "teacher") return "Buyruqlar:\n/men — ballim va o‘rnim\n/topshiriqlar — ochiq topshiriqlarim\n" + common;
-  return "Buyruqlar:\n/bugun — bugungi vazifalarim (belgilash tugmalari bilan)\n/men — samaradorligim\n/topshiriqlar — ochiq topshiriqlarim\n" + common;
+  const common = "/reyting — ustozlar va filiallar reytingi\n/chiqish — Telegramni hisobdan uzish\n/bekor — boshlangan amalni bekor qilish";
+  const write = "\n/murojaat — menejerga muammo yoki taklif yozish (yoki shunchaki xabar yozing)\n";
+  if (role === "admin") return "Buyruqlar:\n/hisobot — bugungi umumiy hisobot\n/xodimlar — xodimlar samaradorligi\n/ustoz <i>ism</i> — ustoz haqida to‘liq ma’lumot\n/shikoyatlar — ko‘rib chiqilmagan shikoyatlar\n/topshiriqlar — muddati o‘tgan topshiriqlar\n/murojaatlar — ochiq murojaatlar\n/xabar — xodim va ustozlarga xabar yuborish\n" + common;
+  if (role === "teacher") return "Buyruqlar:\n/men — ballim va o‘rnim\n/topshiriqlar — ochiq topshiriqlarim" + write + common;
+  return "Buyruqlar:\n/bugun — bugungi vazifalarim (belgilash tugmalari bilan)\n/men — samaradorligim\n/topshiriqlar — ochiq topshiriqlarim" + write + common;
+}
+
+
+// ---------------- Murojaatlar va xabarlar ----------------
+async function getState(chat: number) {
+  const r = await db(`tg_chat_state?chat_id=eq.${chat}&select=state,data,at`);
+  if (!r || !r.length) return null;
+  if (Date.now() - new Date(r[0].at).getTime() > 30 * 60 * 1000) { await clearState(chat); return null; }
+  return r[0];
+}
+async function setState(chat: number, state: string, data: unknown = {}) {
+  await db("tg_chat_state", { method: "POST", prefer: "resolution=merge-duplicates", body: JSON.stringify([{ chat_id: chat, state, data, at: new Date().toISOString() }]) });
+}
+async function clearState(chat: number) { await db(`tg_chat_state?chat_id=eq.${chat}`, { method: "DELETE" }); }
+async function asUser(chat: number, fn: string, args: Record<string, unknown>) {
+  const token = await rpc("tg_session", { p_chat: chat });
+  return rpc(fn, { p_token: token, ...args });
+}
+function authorLabel(c: Ctx, t: any, acc: any) {
+  if (t.anon) return "Anonim";
+  const p = acc ? personOf(c, acc) : null;
+  if (!p) return t.author;
+  return acc.role === "teacher" ? `${p.name} (Ustoz, ${branchName(c, p.branchId)})` : `${p.name} (${ROLES[p.role]}, ${branchName(c, p.branchId)})`;
+}
+const KIND: Record<string, string> = { muammo: "⚠️ Muammo", taklif: "💡 Taklif" };
+const TSTAT: Record<string, string> = { yangi: "Yangi", jarayonda: "Ko‘rib chiqilmoqda", hal: "Hal qilindi ✅" };
+function ticketText(c: Ctx, t: any, acc: any, replies: any[] = []) {
+  let s = `${KIND[t.kind]} <b>#${t.id}</b> · ${TSTAT[t.status]}\n👤 ${esc(authorLabel(c, t, acc))}\n\n${esc(t.text)}`;
+  if (replies.length) s += "\n\n" + replies.slice(-5).map((r: any) => `${r.from_admin ? "🧑‍💼 Menejer" : "👤 " + (t.anon ? "Anonim" : "Muallif")}: ${esc(r.text)}`).join("\n");
+  return s;
+}
+const adminTicketBtns = (id: number): Btn[][] => [[{ text: "✍️ Javob yozish", callback_data: `r:${id}` }, { text: "✅ Hal qilindi", callback_data: `h:${id}` }]];
+async function loadTicket(id: number) {
+  const t = (await db(`tickets?id=eq.${id}&select=*`))[0];
+  if (!t) return null;
+  const replies = await db(`ticket_replies?ticket_id=eq.${id}&select=*&order=id`);
+  const acc = (await db(`accounts?username=eq.${encodeURIComponent(t.author)}&select=username,role,person_id,tg_chat_id`))[0];
+  return { t, replies: replies || [], acc };
+}
+async function jobNotify(b: any) {
+  const c = await loadCtx(); if (!c.S) return;
+  const admins = c.accounts.filter((a) => a.role === "admin");
+  if (b.event === "ticket_new" || b.event === "ticket_reply" || b.event === "ticket_status") {
+    const x = await loadTicket(Number(b.id)); if (!x) return;
+    const { t, replies, acc } = x;
+    if (b.event === "ticket_new") {
+      for (const a of admins) await send(a.tg_chat_id, "🆕 <b>Yangi murojaat</b>\n\n" + ticketText(c, t, acc), adminTicketBtns(t.id)).catch(() => {});
+    } else if (b.event === "ticket_reply") {
+      const r = replies.find((y: any) => y.id === Number(b.reply_id)); if (!r) return;
+      if (r.from_admin) {
+        if (acc && acc.tg_chat_id) await send(acc.tg_chat_id, `💬 <b>Menejer javobi</b> · murojaat #${t.id}\n\n<i>${esc(t.text.slice(0, 200))}</i>\n\n${esc(r.text)}`, [[{ text: "✍️ Javob yozish", callback_data: `r:${t.id}` }]]).catch(() => {});
+      } else {
+        for (const a of admins) await send(a.tg_chat_id, `💬 <b>Murojaat #${t.id} ga yangi xabar</b>\n👤 ${esc(authorLabel(c, t, acc))}\n\n${esc(r.text)}`, adminTicketBtns(t.id)).catch(() => {});
+      }
+    } else if (acc && acc.tg_chat_id) {
+      await send(acc.tg_chat_id, `📋 Murojaatingiz <b>#${t.id}</b> holati: <b>${TSTAT[t.status]}</b>\n\n<i>${esc(t.text.slice(0, 300))}</i>`).catch(() => {});
+    }
+    return;
+  }
+  if (b.event === "ann") {
+    const an = (await db(`announcements?id=eq.${Number(b.id)}&select=*`))[0]; if (!an) return;
+    for (const a of c.accounts.filter((x) => (an.recipients || []).includes(x.username))) {
+      await send(a.tg_chat_id, `📢 <b>Menejerdan xabar</b>\n\n${esc(an.text)}`, [[{ text: "👍 O‘qidim", callback_data: `a:${an.id}` }]]).catch(() => {});
+    }
+  }
+}
+function kindButtons(prefix: string): Btn[][] {
+  return [[{ text: "⚠️ Muammo", callback_data: `${prefix}:muammo` }, { text: "💡 Taklif", callback_data: `${prefix}:taklif` }], [{ text: "🕶 Anonim taklif", callback_data: `${prefix}:anon` }, { text: "❌ Bekor", callback_data: `${prefix}:cancel` }]];
+}
+function annTargets(c: Ctx): Btn[][] {
+  const rows: Btn[][] = [[{ text: "👥 Hammaga", callback_data: "x:all" }], [{ text: "👩‍🏫 Ustozlarga", callback_data: "x:teachers" }, { text: "🧹 Xodimlarga", callback_data: "x:staff" }]];
+  for (const b of c.S.branches) rows.push([{ text: `🏢 ${b.name}`.slice(0, 40), callback_data: `x:branch:${b.id}`.slice(0, 64) }]);
+  rows.push([{ text: "❌ Bekor", callback_data: "x:cancel" }]);
+  return rows;
+}
+function targetLabel(c: Ctx, target: string) {
+  if (target === "all") return "Hammaga (ustoz va xodimlar)";
+  if (target === "teachers") return "Barcha ustozlarga";
+  if (target === "staff") return "Barcha xodimlarga";
+  if (target.startsWith("branch:")) { const b = byId(c.S.branches, target.slice(7)); return (b ? b.name : "Filial") + " filialiga"; }
+  return target;
+}
+// Holatga qarab kelgan oddiy matnni qayta ishlash. true = qayta ishlandi
+async function handleStatefulText(chat: number, acc: any, text: string, c: Ctx): Promise<boolean> {
+  const st = await getState(chat);
+  if (!st) return false;
+  const d = st.data || {};
+  try {
+    if (st.state === "ticket") {
+      const r = await asUser(chat, "ticket_create", { p_kind: d.kind, p_text: text, p_anon: !!d.anon });
+      await clearState(chat);
+      await send(chat, `✅ Menejerga yuborildi (murojaat <b>#${r.id}</b>${d.anon ? ", anonim" : ""}). Javob shu yerga keladi.`);
+      return true;
+    }
+    if (st.state === "reply") {
+      await asUser(chat, "ticket_reply", { p_ticket: Number(d.id), p_text: text });
+      await clearState(chat);
+      await send(chat, `✅ Javob yuborildi (murojaat #${d.id}).`);
+      return true;
+    }
+    if (st.state === "ann" && acc.role === "admin") {
+      const r = await asUser(chat, "ann_send", { p_target: d.target, p_label: targetLabel(c, d.target), p_text: text });
+      await clearState(chat);
+      await send(chat, `✅ Xabar yuborildi: <b>${r.count}</b> kishiga (${esc(targetLabel(c, d.target))}).`);
+      return true;
+    }
+  } catch (e) {
+    const m = String((e as Error).message);
+    await clearState(chat);
+    await send(chat, m === "no_recipients" ? "Bu guruhda login berilgan odam yo‘q." : "Xatolik: " + esc(m));
+    return true;
+  }
+  return false;
 }
 
 // ---------------- Kiruvchi xabarlar ----------------
@@ -275,6 +389,31 @@ async function onMessage(msg: any) {
   const c = await loadCtx();
   if (!c.S) return send(chat, "Tizim hali sozlanmagan.");
   const p = personOf(c, acc);
+  await ensureCommands();
+  if (cmd === "/bekor") { await clearState(chat); return send(chat, "Bekor qilindi."); }
+  if (!text.startsWith("/")) {
+    if (await handleStatefulText(chat, acc, text, c)) return;
+    if (acc.role !== "admin" && text) {
+      await setState(chat, "pending", { text: text.slice(0, 4000) });
+      return send(chat, "Bu xabarni menejerga yuboraymi? Turini tanlang:", kindButtons("p"));
+    }
+    return send(chat, helpText(acc.role));
+  }
+  await clearState(chat);
+  if (cmd === "/murojaat" && acc.role !== "admin") {
+    if (arg) { await setState(chat, "pending", { text: arg }); return send(chat, "Turini tanlang:", kindButtons("p")); }
+    return send(chat, "Menejerga nima yozmoqchisiz?", kindButtons("m"));
+  }
+  if (acc.role === "admin" && cmd === "/xabar") return send(chat, "Kimga xabar yuboramiz?", annTargets(c));
+  if (acc.role === "admin" && cmd === "/murojaatlar") {
+    const open = await db("tickets?status=neq.hal&select=*&order=updated_at.desc&limit=10");
+    if (!open || !open.length) return send(chat, "Ochiq murojaat yo‘q 👌");
+    for (const t of open) {
+      const acc2 = (await db(`accounts?username=eq.${encodeURIComponent(t.author)}&select=username,role,person_id`))[0];
+      await send(chat, ticketText(c, t, acc2), adminTicketBtns(t.id));
+    }
+    return;
+  }
   if (cmd === "/chiqish") {
     await db(`accounts?tg_chat_id=eq.${chat}`, { method: "PATCH", body: JSON.stringify({ tg_chat_id: null }) });
     return send(chat, "Telegram hisobingizdan uzildi. Qayta ulash uchun saytdagi Profil bo‘limidan foydalaning.");
@@ -344,6 +483,51 @@ async function onCallback(q: any) {
       await answer("Topshiriq bajarildi deb belgilandi ✅");
       const c = await loadCtx(); const p = personOf(c, acc);
       if (p) { const m = myTasks(c, acc.role, p.id); await edit(chat, msgId, m.text, m.btns); }
+      return;
+    }
+    if (data.startsWith("m:") || data.startsWith("p:")) {
+      const v = data.slice(2);
+      if (v === "cancel") { await clearState(chat); await answer("Bekor qilindi"); await edit(chat, msgId, "Bekor qilindi."); return; }
+      const kind = v === "anon" ? "taklif" : v, anon = v === "anon";
+      if (data.startsWith("m:")) {
+        await setState(chat, "ticket", { kind, anon });
+        await answer("");
+        await edit(chat, msgId, `${KIND[kind]}${anon ? " (anonim)" : ""} — matnini bitta xabarda yozing:`);
+        return;
+      }
+      const st = await getState(chat);
+      if (!st || st.state !== "pending") { await answer("Xabar eskirgan, qaytadan yozing", true); return; }
+      const r = await asUser(chat, "ticket_create", { p_kind: kind, p_text: st.data.text, p_anon: anon });
+      await clearState(chat);
+      await answer("Yuborildi ✅");
+      await edit(chat, msgId, `✅ Menejerga yuborildi: ${KIND[kind]}${anon ? " (anonim)" : ""}, murojaat <b>#${r.id}</b>. Javob shu yerga keladi.`);
+      return;
+    }
+    if (data.startsWith("r:")) {
+      await setState(chat, "reply", { id: Number(data.slice(2)) });
+      await answer("");
+      await send(chat, `✍️ Murojaat #${data.slice(2)} uchun javobingizni yozing (bekor qilish: /bekor):`);
+      return;
+    }
+    if (data.startsWith("h:") && acc.role === "admin") {
+      await asUser(chat, "ticket_status", { p_ticket: Number(data.slice(2)), p_status: "hal" });
+      await answer("Hal qilindi ✅");
+      await tg("editMessageReplyMarkup", { chat_id: chat, message_id: msgId, reply_markup: { inline_keyboard: [] } });
+      return;
+    }
+    if (data.startsWith("a:")) {
+      await asUser(chat, "ann_read", { p_ids: [Number(data.slice(2))] });
+      await answer("Rahmat!");
+      await tg("editMessageReplyMarkup", { chat_id: chat, message_id: msgId, reply_markup: { inline_keyboard: [] } });
+      return;
+    }
+    if (data.startsWith("x:") && acc.role === "admin") {
+      const target = data.slice(2);
+      if (target === "cancel") { await answer("Bekor qilindi"); await edit(chat, msgId, "Bekor qilindi."); return; }
+      const c = await loadCtx();
+      await setState(chat, "ann", { target });
+      await answer("");
+      await edit(chat, msgId, `📢 ${esc(targetLabel(c, target))} — xabar matnini yozing (bekor qilish: /bekor):`);
       return;
     }
     if (data.startsWith("u:") && acc.role === "admin") {
@@ -460,20 +644,30 @@ async function jobDiff(old: any) {
     await send(a.tg_chat_id, `⚠️ <b>Sizga kelgan shikoyat tasdiqlandi</b> · ${fmt(x.date)}\n${esc(x.text)}\n\nBu reytingingizga ta’sir qiladi. Savollar bo‘lsa, menejeringiz bilan gaplashing.`).catch(() => {});
   }
 }
-async function jobSetup() {
-  const me = await tg("getMe", {});
-  if (me.ok) await setCfg("bot_username", me.result.username);
-  const wh = await tg("setWebhook", { url: CFG.function_url, secret_token: CFG.webhook_secret, allowed_updates: ["message", "callback_query"], drop_pending_updates: true });
+const CMD_VERSION = "2";
+async function setCommands() {
   await tg("setMyCommands", { commands: [
     { command: "bugun", description: "Bugungi vazifalarim (xodimlar)" },
     { command: "men", description: "Mening natijam" },
     { command: "topshiriqlar", description: "Topshiriqlar" },
+    { command: "murojaat", description: "Menejerga muammo yoki taklif yozish" },
     { command: "reyting", description: "Ustozlar va filiallar reytingi" },
     { command: "hisobot", description: "Umumiy hisobot (menejer)" },
+    { command: "murojaatlar", description: "Ochiq murojaatlar (menejer)" },
+    { command: "xabar", description: "Xabar yuborish (menejer)" },
     { command: "xodimlar", description: "Xodimlar samaradorligi (menejer)" },
     { command: "shikoyatlar", description: "Shikoyatlar (menejer)" },
+    { command: "bekor", description: "Amalni bekor qilish" },
     { command: "chiqish", description: "Telegramni uzish" },
   ] });
+  await setCfg("cmd_version", CMD_VERSION);
+}
+async function ensureCommands() { if (CFG.cmd_version !== CMD_VERSION) { await setCommands(); CFG.cmd_version = CMD_VERSION; } }
+async function jobSetup() {
+  const me = await tg("getMe", {});
+  if (me.ok) await setCfg("bot_username", me.result.username);
+  const wh = await tg("setWebhook", { url: CFG.function_url, secret_token: CFG.webhook_secret, allowed_updates: ["message", "callback_query"], drop_pending_updates: true });
+  await setCommands();
   const res = JSON.stringify({ bot: me.ok ? "@" + me.result.username : me.description, webhook: wh.ok ? "ok" : wh.description, at: new Date().toISOString() });
   await setCfg("setup_result", res);
   return res;
@@ -500,6 +694,7 @@ Deno.serve(async (req) => {
       else if (job === "weekly") await jobWeekly();
       else if (job === "reminders") await jobReminders();
       else if (job === "diff") await jobDiff(body.old);
+      else if (job === "notify") await jobNotify(body);
       return new Response("ok");
     }
     return new Response("forbidden", { status: 403 });

@@ -40,3 +40,11 @@ Bot Supabase Edge Function sifatida ishlaydi (`supabase/functions/telegram/index
 | Xodim | 07:00 kunlik vazifalar ro'yxati (tugma bilan belgilash), har bir vazifa vaqtida eslatma, 20:30 kun yakuni, dushanba haftalik natija |
 | Ustoz | Yangi topshiriq, dars bahosi, menejer bahosi, tasdiqlangan shikoyat; dushanba ball va o'rin |
 | Menejer | 20:30 kunlik hisobot (filiallar, xodimlar, shikoyatlar, muddati o'tganlar), dushanba to'liq reyting, yangi shikoyat va bajarilgan topshiriqlar; `/ustoz ism`, `/xodimlar`, `/shikoyatlar` |
+
+## Murojaatlar va xabarlar
+
+`messages.sql` ni SQL Editor'da bir marta ishga tushiring (setup.sql va telegram.sql dan keyin).
+
+- **Ustoz / xodim → menejer:** saytda «Xabarlar → Menejerga yozish» (muammo yoki taklif, xohlasa anonim) yoki botga oddiy xabar yozish / `/murojaat`.
+- **Menejer:** «Xabarlar → Murojaatlar» — javob yozish, holat (Yangi / Ko'rib chiqilmoqda / Hal qilindi). Botda yangi murojaat tugmalar bilan keladi: «Javob yozish», «Hal qilindi»; `/murojaatlar`.
+- **Menejer → xodimlar:** «Xabarlar → Xabar yuborish» — hammaga, ustozlarga, xodimlarga, filialga, lavozimga yoki bitta odamga; kim o'qiganini ko'rasiz. Botda `/xabar`.
