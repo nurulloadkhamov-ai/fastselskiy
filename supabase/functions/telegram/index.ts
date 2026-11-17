@@ -99,7 +99,7 @@ async function loadCtx(): Promise<Ctx> {
   const logs = await db(`duty_logs?select=day,duty_id,status,at&day=gte.${addDays(today(), -40)}`);
   const LOGS: Ctx["LOGS"] = {};
   for (const l of logs || []) LOGS[`${l.day}|${l.duty_id}`] = { s: l.status, at: l.at };
-  const accounts = await db("accounts?select=username,role,person_id,tg_chat_id&tg_chat_id=not.is.null");
+  const accounts = await db("accounts?select=username,role,person_id,branch_id,tg_chat_id&tg_chat_id=not.is.null");
   if (S) {
     S.settings = Object.assign({ lateMin: 30, tw: { lesson: 40, manager: 30, tasks: 15, complaints: 15 }, bw: { teachers: 40, staff: 30, growth: 30 } }, S.settings || {});
     for (const k of ["branches", "teachers", "evals", "ratings", "complaints", "staff", "duties", "tasks"]) if (!Array.isArray(S[k])) S[k] = [];
@@ -107,6 +107,19 @@ async function loadCtx(): Promise<Ctx> {
   return { S, LOGS, accounts: accounts || [] };
 }
 const byId = (a: any[], id: string) => a.find((x) => x.id === id) || null;
+// Filial adminlari: branch_id bo'sh — bosh admin (hamma filial), aks holda faqat o'z filiali
+function personBranch(c: Ctx, role: string, pid: string) { const p = role === "teacher" ? byId(c.S.teachers, pid) : role === "staff" ? byId(c.S.staff, pid) : null; return p ? p.branchId : null; }
+function adminsFor(c: Ctx, branchId: string | null) { return c.accounts.filter((a) => a.role === "admin" && (!a.branch_id || a.branch_id === branchId)); }
+function scoped(c: Ctx, b: string | null): Ctx {
+  if (!b || !c.S) return c;
+  const S = c.S, tset = new Set(S.teachers.filter((t: any) => t.branchId === b).map((t: any) => t.id)), sset = new Set(S.staff.filter((t: any) => t.branchId === b).map((t: any) => t.id));
+  return { ...c, S: { ...S,
+    teachers: S.teachers.filter((t: any) => tset.has(t.id)), staff: S.staff.filter((t: any) => sset.has(t.id)),
+    evals: S.evals.filter((e: any) => tset.has(e.teacherId)), ratings: S.ratings.filter((e: any) => tset.has(e.teacherId)),
+    complaints: S.complaints.filter((e: any) => tset.has(e.teacherId)), duties: S.duties.filter((d: any) => sset.has(d.staffId)),
+    tasks: S.tasks.filter((k: any) => (k.type === "teacher" ? tset : sset).has(k.assigneeId)),
+    branches: S.branches.filter((x: any) => x.id === b) } };
+}
 function weighted(parts: { v: number | null; w: number }[]) { let sw = 0, sv = 0; for (const p of parts) if (p.v != null && p.w > 0) { sw += p.w; sv += p.v * p.w; } return sw ? sv / sw : null; }
 function branchName(c: Ctx, id: string) { const b = byId(c.S.branches, id); return b ? b.name : "—"; }
 function teacherStats(c: Ctx, t: any) {
@@ -220,7 +233,7 @@ function staffReport(c: Ctx) {
   }
   return txt;
 }
-function adminSummary(c: Ctx, title: string) {
+function adminSummary(c: Ctx, title: string, full?: Ctx) {
   const T = today();
   const pending = c.S.complaints.filter((x: any) => x.status === "yangi");
   const overdue = c.S.tasks.filter((k: any) => k.status !== "bajarildi" && k.deadline < T);
@@ -228,7 +241,7 @@ function adminSummary(c: Ctx, title: string) {
   let txt = `📊 <b>${title}</b> · ${fmt(T)}\n\n` +
     `• Xodimlar bugungi samaradorligi: <b>${sDay.length ? r0(avg(sDay)) + "%" : "—"}</b>\n` +
     `• Ko‘rib chiqilmagan shikoyatlar: <b>${pending.length}</b>\n` +
-    `• Muddati o‘tgan topshiriqlar: <b>${overdue.length}</b>\n\n` + branchRanking(c);
+    `• Muddati o‘tgan topshiriqlar: <b>${overdue.length}</b>\n\n` + branchRanking(full || c);
   if (pending.length) txt += "\n\n⚠️ <b>Ko‘rib chiqilishi kerak</b>\n" + pending.slice(0, 10).map((x: any) => { const t = byId(c.S.teachers, x.teacherId); return `• ${esc(t ? t.name : "—")}: ${esc(x.text)} (${fmt(x.date)})`; }).join("\n");
   if (overdue.length) txt += "\n\n⏰ <b>Muddati o‘tgan topshiriqlar</b>\n" + overdue.slice(0, 10).map((k: any) => `• ${esc(k.title)} — ${esc(assignee(c, k))} (${fmt(k.deadline)})`).join("\n");
   return txt;
@@ -282,10 +295,11 @@ async function loadTicket(id: number) {
 }
 async function jobNotify(b: any) {
   const c = await loadCtx(); if (!c.S) return;
-  const admins = c.accounts.filter((a) => a.role === "admin");
+  let admins = c.accounts.filter((a) => a.role === "admin");
   if (b.event === "ticket_new" || b.event === "ticket_reply" || b.event === "ticket_status") {
     const x = await loadTicket(Number(b.id)); if (!x) return;
     const { t, replies, acc } = x;
+    admins = adminsFor(c, acc ? personBranch(c, acc.role, acc.person_id) : null);
     if (b.event === "ticket_new") {
       for (const a of admins) await send(a.tg_chat_id, "🆕 <b>Yangi murojaat</b>\n\n" + ticketText(c, t, acc), adminTicketBtns(t.id)).catch(() => {});
     } else if (b.event === "ticket_reply") {
@@ -310,9 +324,9 @@ async function jobNotify(b: any) {
 function kindButtons(prefix: string): Btn[][] {
   return [[{ text: "⚠️ Muammo", callback_data: `${prefix}:muammo` }, { text: "💡 Taklif", callback_data: `${prefix}:taklif` }], [{ text: "🕶 Anonim taklif", callback_data: `${prefix}:anon` }, { text: "❌ Bekor", callback_data: `${prefix}:cancel` }]];
 }
-function annTargets(c: Ctx): Btn[][] {
-  const rows: Btn[][] = [[{ text: "👥 Hammaga", callback_data: "x:all" }], [{ text: "👩‍🏫 Ustozlarga", callback_data: "x:teachers" }, { text: "🧹 Xodimlarga", callback_data: "x:staff" }]];
-  for (const b of c.S.branches) rows.push([{ text: `🏢 ${b.name}`.slice(0, 40), callback_data: `x:branch:${b.id}`.slice(0, 64) }]);
+function annTargets(c: Ctx, own?: string | null): Btn[][] {
+  const rows: Btn[][] = [[{ text: own ? "👥 Filialimdagi hammaga" : "👥 Hammaga", callback_data: "x:all" }], [{ text: "👩‍🏫 Ustozlarga", callback_data: "x:teachers" }, { text: "🧹 Xodimlarga", callback_data: "x:staff" }]];
+  if (!own) for (const b of c.S.branches) rows.push([{ text: `🏢 ${b.name}`.slice(0, 40), callback_data: `x:branch:${b.id}`.slice(0, 64) }]);
   rows.push([{ text: "❌ Bekor", callback_data: "x:cancel" }]);
   return rows;
 }
@@ -342,9 +356,9 @@ async function handleStatefulText(chat: number, acc: any, text: string, c: Ctx):
       return true;
     }
     if (st.state === "ann" && acc.role === "admin") {
-      const r = await asUser(chat, "ann_send", { p_target: d.target, p_label: targetLabel(c, d.target), p_text: text });
+      const r = await asUser(chat, "ann_send", { p_target: d.target, p_label: (acc.branch_id ? branchName(c, acc.branch_id) + ": " : "") + targetLabel(c, d.target), p_text: text });
       await clearState(chat);
-      await send(chat, `✅ Xabar yuborildi: <b>${r.count}</b> kishiga (${esc(targetLabel(c, d.target))}).`);
+      await send(chat, `✅ Xabar yuborildi: <b>${r.count}</b> kishiga (${esc((acc.branch_id ? branchName(c, acc.branch_id) + ": " : "") + targetLabel(c, d.target))}).`);
       return true;
     }
   } catch (e) {
@@ -382,13 +396,14 @@ async function onMessage(msg: any) {
         : "Har kuni kechqurun umumiy hisobot, har dushanba haftalik reyting, yangi shikoyatlar va bajarilgan topshiriqlar shu yerga keladi.\n\n") + helpText(a.role));
     return;
   }
-  const acc = (await db(`accounts?tg_chat_id=eq.${chat}&select=username,role,person_id`))[0];
+  const acc = (await db(`accounts?tg_chat_id=eq.${chat}&select=username,role,person_id,branch_id`))[0];
   if (!acc) {
     return send(chat, "👋 Bu Fast Education baholash tizimining boti.\n\nUlanish uchun saytga kiring → <b>Profil</b> → <b>Telegramni ulash</b> tugmasini bosing.", siteBtn());
   }
   const c = await loadCtx();
   if (!c.S) return send(chat, "Tizim hali sozlanmagan.");
   const p = personOf(c, acc);
+  const cs = acc.role === "admin" ? scoped(c, acc.branch_id) : c;
   await ensureCommands();
   if (cmd === "/bekor") { await clearState(chat); return send(chat, "Bekor qilindi."); }
   if (!text.startsWith("/")) {
@@ -404,12 +419,13 @@ async function onMessage(msg: any) {
     if (arg) { await setState(chat, "pending", { text: arg }); return send(chat, "Turini tanlang:", kindButtons("p")); }
     return send(chat, "Menejerga nima yozmoqchisiz?", kindButtons("m"));
   }
-  if (acc.role === "admin" && cmd === "/xabar") return send(chat, "Kimga xabar yuboramiz?", annTargets(c));
+  if (acc.role === "admin" && cmd === "/xabar") return send(chat, "Kimga xabar yuboramiz?", annTargets(c, acc.branch_id));
   if (acc.role === "admin" && cmd === "/murojaatlar") {
     const open = await db("tickets?status=neq.hal&select=*&order=updated_at.desc&limit=10");
     if (!open || !open.length) return send(chat, "Ochiq murojaat yo‘q 👌");
     for (const t of open) {
       const acc2 = (await db(`accounts?username=eq.${encodeURIComponent(t.author)}&select=username,role,person_id`))[0];
+      if (acc.branch_id && (!acc2 || personBranch(c, acc2.role, acc2.person_id) !== acc.branch_id)) continue;
       await send(chat, ticketText(c, t, acc2), adminTicketBtns(t.id));
     }
     return;
@@ -418,27 +434,27 @@ async function onMessage(msg: any) {
     await db(`accounts?tg_chat_id=eq.${chat}`, { method: "PATCH", body: JSON.stringify({ tg_chat_id: null }) });
     return send(chat, "Telegram hisobingizdan uzildi. Qayta ulash uchun saytdagi Profil bo‘limidan foydalaning.");
   }
-  if (cmd === "/reyting") { await send(chat, branchRanking(c)); return send(chat, teacherRanking(c)); }
+  if (cmd === "/reyting") { await send(chat, branchRanking(c)); return send(chat, teacherRanking(acc.role === "admin" ? cs : c)); }
   if (acc.role === "admin") {
-    if (cmd === "/xodimlar") return send(chat, staffReport(c));
+    if (cmd === "/xodimlar") return send(chat, staffReport(cs));
     if (cmd === "/shikoyatlar") {
-      const pend = c.S.complaints.filter((x: any) => x.status === "yangi");
+      const pend = cs.S.complaints.filter((x: any) => x.status === "yangi");
       return send(chat, pend.length ? "⚠️ <b>Ko‘rib chiqilmagan shikoyatlar</b>\n\n" + pend.map((x: any) => { const t = byId(c.S.teachers, x.teacherId); return `• <b>${esc(t ? t.name : "—")}</b> (${fmt(x.date)}, ${esc(x.source)}): ${esc(x.text)}`; }).join("\n") + "\n\nTasdiqlash yoki rad etish: sayt → Admin panel → Baholash va shikoyatlar." : "Ko‘rib chiqilmagan shikoyat yo‘q 👌", siteBtn());
     }
     if (cmd === "/topshiriqlar") {
-      const T = today(); const od = c.S.tasks.filter((k: any) => k.status !== "bajarildi" && k.deadline < T);
-      const open = c.S.tasks.filter((k: any) => k.status !== "bajarildi").length;
+      const T = today(); const od = cs.S.tasks.filter((k: any) => k.status !== "bajarildi" && k.deadline < T);
+      const open = cs.S.tasks.filter((k: any) => k.status !== "bajarildi").length;
       return send(chat, `📌 Ochiq topshiriqlar: <b>${open}</b>, muddati o‘tgan: <b>${od.length}</b>\n\n` + od.map((k: any) => `🔴 ${esc(k.title)} — ${esc(assignee(c, k))} (${fmt(k.deadline)})`).join("\n"));
     }
     if (cmd === "/ustoz") {
       if (!arg) return send(chat, "Ismini yozing, masalan: <code>/ustoz Aziza</code>");
-      const found = c.S.teachers.filter((t: any) => t.name.toLowerCase().includes(arg.toLowerCase()));
+      const found = cs.S.teachers.filter((t: any) => t.name.toLowerCase().includes(arg.toLowerCase()));
       if (!found.length) return send(chat, "Topilmadi.");
       if (found.length > 1 && found.length <= 10) return send(chat, "Bir nechta topildi, tanlang:", found.map((t: any) => [{ text: t.name, callback_data: `u:${t.id}` }]));
       if (found.length > 10) return send(chat, "Juda ko‘p topildi, aniqroq yozing.");
       return send(chat, teacherCard(c, found[0], true));
     }
-    if (cmd === "/hisobot" || cmd === "/men" || cmd === "/start") return send(chat, adminSummary(c, "Umumiy hisobot") + "\n\n" + (cmd === "/start" ? helpText("admin") : ""));
+    if (cmd === "/hisobot" || cmd === "/men" || cmd === "/start") return send(chat, adminSummary(cs, "Umumiy hisobot", c) + "\n\n" + (cmd === "/start" ? helpText("admin") : ""));
     return send(chat, helpText("admin"));
   }
   if (!p) return send(chat, "Hisobingiz hech qaysi ustoz yoki xodimga bog‘lanmagan. Menejerga murojaat qiling.");
@@ -460,7 +476,7 @@ async function onCallback(q: any) {
   const chat = q.message?.chat?.id as number, msgId = q.message?.message_id as number;
   const data = String(q.data || "");
   const answer = (text: string, alert = false) => tg("answerCallbackQuery", { callback_query_id: q.id, text, show_alert: alert });
-  const acc = (await db(`accounts?tg_chat_id=eq.${chat}&select=username,role,person_id`))[0];
+  const acc = (await db(`accounts?tg_chat_id=eq.${chat}&select=username,role,person_id,branch_id`))[0];
   if (!acc) return answer("Avval saytdan Telegramni ulang", true);
   try {
     if (data.startsWith("t:")) {
@@ -527,7 +543,7 @@ async function onCallback(q: any) {
       const c = await loadCtx();
       await setState(chat, "ann", { target });
       await answer("");
-      await edit(chat, msgId, `📢 ${esc(targetLabel(c, target))} — xabar matnini yozing (bekor qilish: /bekor):`);
+      await edit(chat, msgId, `📢 ${esc((acc.branch_id ? branchName(c, acc.branch_id) + ": " : "") + targetLabel(c, target))} — xabar matnini yozing (bekor qilish: /bekor):`);
       return;
     }
     if (data.startsWith("u:") && acc.role === "admin") {
@@ -566,7 +582,7 @@ async function jobEvening() {
   const T = today();
   for (const { a, p } of await linkedPeople(c)) {
     try {
-      if (a.role === "admin") { await send(a.tg_chat_id, adminSummary(c, "Kunlik hisobot")); await send(a.tg_chat_id, staffReport(c)); }
+      if (a.role === "admin") { const cs = scoped(c, a.branch_id); await send(a.tg_chat_id, adminSummary(cs, "Kunlik hisobot", c)); await send(a.tg_chat_id, staffReport(cs)); }
       else if (a.role === "staff") {
         const ds = dutiesOn(c, p.id, T); if (!ds.length) continue;
         const st = staffStats(c, p);
@@ -581,7 +597,7 @@ async function jobWeekly() {
   const c = await loadCtx(); if (!c.S) return;
   for (const { a, p } of await linkedPeople(c)) {
     try {
-      if (a.role === "admin") { await send(a.tg_chat_id, "📅 <b>Haftalik hisobot</b>\n\n" + branchRanking(c)); await send(a.tg_chat_id, teacherRanking(c)); }
+      if (a.role === "admin") { await send(a.tg_chat_id, "📅 <b>Haftalik hisobot</b>\n\n" + branchRanking(c)); await send(a.tg_chat_id, teacherRanking(scoped(c, a.branch_id))); }
       else if (a.role === "teacher") await send(a.tg_chat_id, "📅 <b>Haftalik natijangiz</b>\n\n" + teacherCard(c, p, false));
       else if (a.role === "staff") {
         const st = staffStats(c, p);
@@ -629,7 +645,7 @@ async function jobDiff(old: any) {
     const a = accOf(k.type, k.assigneeId); if (!a) continue;
     await send(a.tg_chat_id, `📌 <b>Yangi topshiriq</b>\n${esc(k.title)}${k.desc ? `\n<i>${esc(k.desc)}</i>` : ""}\n\nMuddat: <b>${fmt(k.deadline)}</b> · muhimlik: ${esc(k.priority)}`, [[{ text: "✅ Bajarildi", callback_data: `k:${k.id}` }]]).catch(() => {});
   }
-  for (const k of doneTasks) for (const a of admins) await send(a.tg_chat_id, `✅ <b>Topshiriq bajarildi</b>\n${esc(k.title)} — ${esc(assignee(c, k))}`).catch(() => {});
+  for (const k of doneTasks) for (const a of adminsFor(c, personBranch(c, k.type, k.assigneeId))) await send(a.tg_chat_id, `✅ <b>Topshiriq bajarildi</b>\n${esc(k.title)} — ${esc(assignee(c, k))}`).catch(() => {});
   for (const e of newEvals) {
     const a = accOf("teacher", e.teacherId); if (!a) continue;
     await send(a.tg_chat_id, `📝 <b>Darsingiz baholandi</b> · ${fmt(e.date)}\nO‘rtacha: <b>${r1(avg(e.c))}</b>/10\nTayyorgarlik ${e.c[0]} · Metodika ${e.c[1]} · Faollik ${e.c[2]} · Vaqt ${e.c[3]}${e.note ? `\n<i>${esc(e.note)}</i>` : ""}`).catch(() => {});
@@ -638,7 +654,7 @@ async function jobDiff(old: any) {
     const a = accOf("teacher", r.teacherId); if (!a) continue;
     await send(a.tg_chat_id, `⭐ <b>Menejer bahosi</b>\n${esc(r.work)}: <b>${r.score}/10</b>${r.comment ? `\n<i>${esc(r.comment)}</i>` : ""}`).catch(() => {});
   }
-  for (const x of newComp) { const t = byId(S.teachers, x.teacherId); for (const a of admins) await send(a.tg_chat_id, `⚠️ <b>Yangi shikoyat</b> — ${esc(t ? t.name : "—")}\n${esc(x.text)} (${esc(x.source)})\n\nKo‘rib chiqing: sayt → Admin panel → Baholash va shikoyatlar.`).catch(() => {}); }
+  for (const x of newComp) { const t = byId(S.teachers, x.teacherId); for (const a of adminsFor(c, t ? t.branchId : null)) await send(a.tg_chat_id, `⚠️ <b>Yangi shikoyat</b> — ${esc(t ? t.name : "—")}\n${esc(x.text)} (${esc(x.source)})\n\nKo‘rib chiqing: sayt → Admin panel → Baholash va shikoyatlar.`).catch(() => {}); }
   for (const x of confComp) {
     const a = accOf("teacher", x.teacherId); if (!a) continue;
     await send(a.tg_chat_id, `⚠️ <b>Sizga kelgan shikoyat tasdiqlandi</b> · ${fmt(x.date)}\n${esc(x.text)}\n\nBu reytingingizga ta’sir qiladi. Savollar bo‘lsa, menejeringiz bilan gaplashing.`).catch(() => {});

@@ -48,3 +48,11 @@ Bot Supabase Edge Function sifatida ishlaydi (`supabase/functions/telegram/index
 - **Ustoz / xodim → menejer:** saytda «Xabarlar → Menejerga yozish» (muammo yoki taklif, xohlasa anonim) yoki botga oddiy xabar yozish / `/murojaat`.
 - **Menejer:** «Xabarlar → Murojaatlar» — javob yozish, holat (Yangi / Ko'rib chiqilmoqda / Hal qilindi). Botda yangi murojaat tugmalar bilan keladi: «Javob yozish», «Hal qilindi»; `/murojaatlar`.
 - **Menejer → xodimlar:** «Xabarlar → Xabar yuborish» — hammaga, ustozlarga, xodimlarga, filialga, lavozimga yoki bitta odamga; kim o'qiganini ko'rasiz. Botda `/xabar`.
+
+## Filial adminlari
+
+`branch_admin.sql` ni SQL Editor'da bir marta ishga tushiring (oldingi barcha SQL fayllardan keyin).
+
+- **Bosh admin** (filial tanlanmagan) — hamma filiallarni boshqaradi, sozlamalar va filial qo'shish faqat unda.
+- **Filial admini** — Admin panel → Login-parollar → Rol: «Admin», «Qaysi filial»: kerakli filial. U faqat o'z filialining ustozlari, xodimlari, baholari, shikoyatlari, vazifalari, topshiriqlari, login-parollari, murojaatlari va xabarlarini boshqaradi. Cheklov serverda tekshiriladi: boshqa filial ma'lumotini o'zgartirishga urinish e'tiborsiz qoladi.
+- Botda filial admini hisobot va bildirishnomalarni faqat o'z filiali bo'yicha oladi (filiallar reytingi — hammasi).
