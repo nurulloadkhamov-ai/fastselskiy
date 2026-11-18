@@ -112,7 +112,7 @@ async function load(silent){
     if(isAdmin()&&accounts===null){try{accounts=await rpc("list_accounts",{p_token:AUTH.token});}catch(e){accounts=[];}}
   }catch(e){if(!silent)loadErr=e.message;}
   render();
-  if(loaded&&S)loadMsgs();
+  if(loaded&&S){loadMsgs();loadNotifs();if(pushState==="unknown")checkPush();}
 }
 function setBusy(d){busy+=d;var el=document.getElementById("savestate");if(el)el.innerHTML=saveLabel();}
 function saveLabel(){return busy?'<span class="dot" style="background:var(--brand)"></span>Saqlanmoqda…':'<span class="dot" style="background:var(--good)"></span>Saqlangan';}
@@ -364,7 +364,7 @@ function viewTasks(){
 function prBadge(p){return p==="yuqori"?'<span class="badge b-bad">Yuqori</span>':p==="past"?'<span class="badge b-neu">Past</span>':'<span class="badge b-warn">O\'rta</span>';}
 function viewProfile(){
   var m=me(),p=myPerson();
-  return '<div class="grid g3"><div class="card"><h3>Hisobingiz</h3><div class="list-item"><span class="muted small">Login</span><div><b>'+esc(m.username)+'</b></div></div><div class="list-item"><span class="muted small">Rol</span><div><b>'+roleLabel(m)+(myBranch()?' · '+esc(branchName(myBranch())):'')+'</b></div></div>'+(p?'<div class="list-item"><span class="muted small">Bog\'langan shaxs</span><div><b>'+esc(p.name)+'</b> · '+esc(branchName(p.branchId))+'</div></div>':'')+'<button class="btn mt" data-act="logout">Tizimdan chiqish</button></div>'+
+  return '<div class="grid g3" style="margin-bottom:16px">'+pushCard()+'</div><div class="grid g3"><div class="card"><h3>Hisobingiz</h3><div class="list-item"><span class="muted small">Login</span><div><b>'+esc(m.username)+'</b></div></div><div class="list-item"><span class="muted small">Rol</span><div><b>'+roleLabel(m)+(myBranch()?' · '+esc(branchName(myBranch())):'')+'</b></div></div>'+(p?'<div class="list-item"><span class="muted small">Bog\'langan shaxs</span><div><b>'+esc(p.name)+'</b> · '+esc(branchName(p.branchId))+'</div></div>':'')+'<button class="btn mt" data-act="logout">Tizimdan chiqish</button></div>'+
    '<div class="card"><h3>📲 Telegram bot</h3><p class="sub">Ulansangiz: '+(m.role==="staff"?"har kuni vazifalaringiz ro\'yxati va har bir vazifa vaqtida eslatma keladi, vazifani botning o\'zida belgilaysiz.":m.role==="teacher"?"yangi topshiriqlar, darsingizga qo\'yilgan baholar va har dushanba reytingingiz keladi.":"har kuni kechqurun umumiy hisobot, yangi shikoyatlar va haftalik reyting keladi.")+'</p>'+
     (ui.tgLink?'<a class="btn pri" href="'+esc(ui.tgLink)+'" target="_blank" rel="noopener" style="display:inline-block;text-decoration:none">Telegramda ochish va «Start» bosish →</a><p class="muted small">Havola 15 daqiqa amal qiladi. Botda <b>Start</b> tugmasini bosing.</p>':(ui.tgErr?'<div class="badge b-warn" style="white-space:normal">'+esc(ui.tgErr)+'</div><br><br>':'')+'<div class="flex"><button class="btn pri" data-act="tgLink">Telegramni ulash</button><button class="btn sm" data-act="tgUnlink">Uzish</button></div>')+'</div>'+
    '<div class="card"><h3>Parolni o\'zgartirish</h3><form class="form" data-form="mypass"><label>Hozirgi parol<input class="in" type="password" name="old" required autocomplete="current-password"></label><label>Yangi parol (kamida 6 belgi)<input class="in" type="password" name="p" minlength="6" required autocomplete="new-password"></label><label>Yangi parolni takrorlang<input class="in" type="password" name="p2" minlength="6" required autocomplete="new-password"></label><button class="btn pri" type="submit" style="justify-self:start">O\'zgartirish</button></form></div></div>';
@@ -454,6 +454,79 @@ function viewMessages(){
     h+=MSG.anns.length?'<div class="grid" style="gap:12px">'+MSG.anns.map(function(a){return '<div class="card"'+(a.read?'':' style="border-color:#9DB4F5;box-shadow:0 0 0 3px var(--brand-soft)"')+'><div class="flex between"><b>Menejerdan'+(a.read?'':' <span class="badge b-pri">Yangi</span>')+'</b><span class="muted small">'+esc(a.label)+' · '+fmtDT(a.at)+'</span></div><div style="white-space:pre-wrap;margin-top:8px;font-size:15px">'+esc(a.text)+'</div></div>';}).join("")+'</div>':'<div class="card empty">Hali xabar yo\'q</div>';
   }
   return h;
+}
+
+
+/* ============ Bildirishnomalar: 🔔 va telefon push ============ */
+var NOTIF={items:[],unread:0},notifOk=false,pushState="unknown",pushKey=null;
+var BELL='<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>';
+async function loadNotifs(){
+  if(!AUTH)return;
+  try{var r=await rpc("notif_list",{p_token:AUTH.token});NOTIF=r||{items:[],unread:0};var first=!notifOk;notifOk=true;if(first)render();else updateBell();}
+  catch(e){if(notifOk){notifOk=false;render();}}
+}
+function updateBell(){
+  var b=document.getElementById("bellcount");
+  if(b){b.textContent=NOTIF.unread>99?"99+":String(NOTIF.unread);b.style.display=NOTIF.unread?"":"none";}
+  var p=document.getElementById("bellpanel");if(p)p.innerHTML=bellPanelHtml();
+}
+function bellHtml(){
+  if(!notifOk)return "";
+  return '<div style="position:relative" id="bellwrap"><button class="pill" data-act="bell" aria-label="Bildirishnomalar" aria-expanded="'+(ui.bellOpen?"true":"false")+'" style="cursor:pointer">'+BELL+'<span id="bellcount" class="badge" style="background:var(--accent);color:#1B1206;padding:1px 7px;'+(NOTIF.unread?"":"display:none")+'">'+NOTIF.unread+'</span></button>'+
+    (ui.bellOpen?'<div id="bellpanel" style="position:absolute;right:0;top:44px;width:min(380px,92vw);max-height:70vh;overflow:auto;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:0 12px 32px rgba(16,24,48,.16);z-index:50">'+bellPanelHtml()+'</div>':'')+'</div>';
+}
+function bellPanelHtml(){
+  var h='<div class="flex between" style="padding:12px 14px;border-bottom:1px solid var(--line2)"><b>Bildirishnomalar</b>'+(NOTIF.unread?'<button class="btn sm" data-act="notifAll">Hammasini o\'qildi</button>':'')+'</div>';
+  if(!NOTIF.items.length)h+='<div class="empty small">Hozircha bildirishnoma yo\'q</div>';
+  h+=NOTIF.items.map(function(n){return '<button data-act="notifOpen" data-id="'+n.id+'" data-link="'+esc(n.link)+'" style="display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line2);background:'+(n.read?'transparent':'var(--brand-soft)')+';padding:10px 14px;cursor:pointer"><div class="flex between" style="gap:8px"><b style="font-size:13.5px">'+esc(n.title)+'</b><span class="muted small" style="white-space:nowrap">'+fmtDT(n.at)+'</span></div>'+(n.body?'<div class="small" style="color:var(--ink2);margin-top:2px">'+esc(n.body.length>140?n.body.slice(0,140)+"…":n.body)+'</div>':'')+'</button>';}).join("");
+  if(pushState==="off"||pushState==="ios-install")h+='<a href="#profil" data-act="bellClose" class="small" style="display:block;padding:10px 14px">📱 Telefonga ham kelsinmi? Yoqish →</a>';
+  return h;
+}
+function b64uToBytes(s){s=s.replace(/-/g,"+").replace(/_/g,"/");while(s.length%4)s+="=";var b=atob(s),u=new Uint8Array(b.length);for(var i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return u;}
+function isIOS(){return /iphone|ipad|ipod/i.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);}
+function isStandalone(){try{return (window.matchMedia&&matchMedia("(display-mode: standalone)").matches)||navigator.standalone===true;}catch(e){return false;}}
+async function checkPush(){
+  try{pushKey=await rpc("push_public_key",{});}catch(e){pushKey=null;}
+  if(!("serviceWorker" in navigator)||!("PushManager" in window)||!("Notification" in window)){pushState=isIOS()&&!isStandalone()?"ios-install":"unsupported";render();return;}
+  if(Notification.permission==="denied"){pushState="denied";render();return;}
+  try{
+    var reg=await navigator.serviceWorker.register("sw.js");var sub=await reg.pushManager.getSubscription();
+    if(sub&&Notification.permission==="granted"){pushState="on";var j=sub.toJSON();rpc("push_subscribe",{p_token:AUTH.token,p_endpoint:j.endpoint,p_p256dh:j.keys.p256dh,p_auth:j.keys.auth,p_ua:navigator.userAgent}).catch(function(){});}
+    else pushState="off";
+  }catch(e){pushState="unsupported";}
+  render();
+}
+function enablePush(){
+  // Safari ruxsat so'rovini faqat to'g'ridan-to'g'ri bosishda ko'rsatadi — shuning uchun birinchi qadam shu
+  return Notification.requestPermission().then(async function(perm){
+    if(perm!=="granted"){pushState=perm==="denied"?"denied":"off";render();return;}
+    if(!pushKey)pushKey=await rpc("push_public_key",{});
+    if(!pushKey)throw new Error("Bildirishnoma kaliti hali yaratilmagan — menejer notifications.sql ni ishga tushirishi kerak");
+    var reg=await navigator.serviceWorker.register("sw.js");await navigator.serviceWorker.ready;
+    var sub=await reg.pushManager.getSubscription();
+    if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64uToBytes(pushKey)});
+    var j=sub.toJSON();
+    await rpc("push_subscribe",{p_token:AUTH.token,p_endpoint:j.endpoint,p_p256dh:j.keys.p256dh,p_auth:j.keys.auth,p_ua:navigator.userAgent});
+    pushState="on";toast("Telefon bildirishnomalari yoqildi");render();
+  });
+}
+async function disablePush(){
+  try{var reg=await navigator.serviceWorker.getRegistration();var sub=reg&&await reg.pushManager.getSubscription();
+    if(sub){try{await rpc("push_unsubscribe",{p_token:AUTH.token,p_endpoint:sub.endpoint});}catch(e){}await sub.unsubscribe();}}catch(e){}
+  pushState="off";toast("O\'chirildi");render();
+}
+async function unbindPushOnLogout(tok){
+  try{var reg=await navigator.serviceWorker.getRegistration();var sub=reg&&await reg.pushManager.getSubscription();if(sub)await rpc("push_unsubscribe",{p_token:tok,p_endpoint:sub.endpoint});}catch(e){}
+}
+function pushCard(){
+  var st={on:['b-good','Yoqilgan'],off:['b-neu','O\'chiq'],denied:['b-bad','Brauzerda taqiqlangan'],unsupported:['b-warn','Bu brauzer qo\'llamaydi'],"ios-install":['b-warn','Avval bosh ekranga qo\'shing'],unknown:['b-neu','Tekshirilmoqda…']}[pushState]||['b-neu','—'];
+  var h='<div class="card"><h3>📱 Telefon bildirishnomalari</h3><p class="sub">Sayt yopiq bo\'lsa ham yangi topshiriq, baho, javob, xabar va vazifa eslatmalari telefoningiz ekraniga chiqadi.</p><div style="margin-bottom:12px"><span class="badge '+st[0]+'">'+st[1]+'</span></div>';
+  if(pushState==="off")h+='<button class="btn pri" data-act="pushOn">Yoqish</button>';
+  else if(pushState==="on")h+='<div class="flex"><button class="btn" data-act="pushTest">Sinab ko\'rish</button><button class="btn sm" data-act="pushOff">O\'chirish</button></div>';
+  else if(pushState==="ios-install")h+='<p class="small" style="margin:0">iPhone\'da: Safari\'da pastdagi <b>Ulashish</b> (□↑) tugmasini bosing → <b>«На экран Домой» / «Add to Home Screen»</b> → so\'ng bosh ekrandagi <b>Fast Education</b> ikonkasidan kiring va shu yerda «Yoqish»ni bosing. (iOS 16.4 va undan yangi)</p>';
+  else if(pushState==="denied")h+='<p class="small" style="margin:0">Bildirishnomalar brauzer sozlamalarida taqiqlangan. Manzil satridagi 🔒 belgisini bosib, «Bildirishnomalar»ga ruxsat bering va sahifani yangilang.</p>';
+  else if(pushState==="unsupported")h+='<p class="small" style="margin:0">Bu brauzer push bildirishnomani qo\'llamaydi. Chrome, Edge, Firefox yoki Safari (iPhone\'da — bosh ekranga qo\'shib) ishlating. 🔔 qo\'ng\'iroqcha va Telegram bot baribir ishlaydi.</p>';
+  return h+'</div>';
 }
 
 /* ============ Admin panel ============ */
@@ -560,7 +633,7 @@ function render(){
   var t=TITLES[ui.view],body={dashboard:viewDashboard,filiallar:viewBranches,ustozlar:viewTeachers,xodimlar:viewStaff,topshiriqlar:viewTasks,admin:viewAdmin,profil:viewProfile,xabarlar:viewMessages}[ui.view];
   var scrollY=window.scrollY,active=document.activeElement,activeModel=active&&active.getAttribute&&active.getAttribute("data-model"),selStart=active&&active.selectionStart;
   var p=myPerson();
-  root.innerHTML='<div class="mobile-nav">'+navHtml()+'</div><div class="app"><aside class="side"><div class="logo"><div class="logo-mark">F</div><div><b>Fast Education</b><span>Adolatli baholash tizimi</span></div></div>'+navHtml()+'<div class="userbox"><b>'+esc(p?p.name:me().username)+'</b>'+roleLabel(me())+(myBranch()?' · '+esc(branchName(myBranch())):'')+'<br><button class="btn sm" data-act="logout">Chiqish</button></div></aside><main class="main"><div class="top"><div><h1>'+t[0]+'</h1><p>'+t[1]+'</p></div><span class="pill" id="savestate">'+saveLabel()+'</span></div>'+body()+'</main></div>'+(ui.drawer?'<div class="drawer-bg" data-act="closeDrawerBg"><div class="drawer">'+teacherDrawer(ui.drawer)+'</div></div>':'');
+  root.innerHTML='<div class="mobile-nav">'+navHtml()+'</div><div class="app"><aside class="side"><div class="logo"><div class="logo-mark">F</div><div><b>Fast Education</b><span>Adolatli baholash tizimi</span></div></div>'+navHtml()+'<div class="userbox"><b>'+esc(p?p.name:me().username)+'</b>'+roleLabel(me())+(myBranch()?' · '+esc(branchName(myBranch())):'')+'<br><button class="btn sm" data-act="logout">Chiqish</button></div></aside><main class="main"><div class="top"><div><h1>'+t[0]+'</h1><p>'+t[1]+'</p></div><div class="flex" style="flex-wrap:nowrap">'+bellHtml()+'<span class="pill" id="savestate">'+saveLabel()+'</span></div></div>'+(pushState==="off"&&ls("fe_push_hint")!=="1"&&ui.view==="dashboard"?'<div class="banner flex between"><span>📱 Yangi topshiriq, baho va eslatmalar telefoningizga ham kelsinmi?</span><span class="flex"><button class="btn sm pri" data-act="pushOn">Yoqish</button><button class="btn sm" data-act="pushHintX">Keyinroq</button></span></div>':'')+body()+'</main></div>'+(ui.drawer?'<div class="drawer-bg" data-act="closeDrawerBg"><div class="drawer">'+teacherDrawer(ui.drawer)+'</div></div>':'');
   window.scrollTo(0,scrollY);
   if(activeModel){var el=document.querySelector('[data-model="'+activeModel+'"]');if(el&&el.tagName==="INPUT"&&el.type==="text"){el.focus();try{el.setSelectionRange(selStart,selStart);}catch(e){}}}
 }
@@ -582,6 +655,7 @@ async function seedServer(pack){
   finally{setBusy(-1);render();}
 }
 document.addEventListener("click",function(e){
+  if(ui.bellOpen&&!e.target.closest("#bellwrap")){ui.bellOpen=false;render();}
   var el=e.target.closest("[data-act]");if(!el)return;
   var a=el.getAttribute("data-act"),id=el.getAttribute("data-id");
   if(a!=="del"&&a!=="wipe"&&a!=="reseed")ui.armed=null;
@@ -594,12 +668,20 @@ document.addEventListener("click",function(e){
   if(a==="taskFilter"){ui.taskFilter=id;render();return;}
   if(a==="reload"){loadErr="";render();load();return;}
   if(a==="adm"){e.preventDefault();ui.adm=id;ls("fe_adm_tab",id);if(ui.view!=="admin")location.hash="#admin";else render();return;}
-  if(a==="logout"){var tk=AUTH&&AUTH.token;if(tk)rpc("logout",{p_token:tk}).catch(function(){});logoutLocal();return;}
+  if(a==="logout"){var tk=AUTH&&AUTH.token;if(tk){unbindPushOnLogout(tk).finally(function(){rpc("logout",{p_token:tk}).catch(function(){});});}pushState="unknown";notifOk=false;NOTIF={items:[],unread:0};logoutLocal();return;}
   if(a==="tick"){
     if(el.disabled)return;var date=ui.sDate,key=date+"|"+id;el.disabled=true;setBusy(1);
     rpc("tick",{p_token:AUTH.token,p_day:date,p_duty_id:id}).then(function(r){if(r.log)LOGS[key]=r.log;else delete LOGS[key];if(r.log&&r.log.s==="l"&&!isAdmin())toast("Belgilandi — kechikish bilan ("+r.log.at+")");}).catch(function(err){toast(err.message,true);}).finally(function(){setBusy(-1);render();});
     return;
   }
+  if(a==="bell"){ui.bellOpen=!ui.bellOpen;render();if(ui.bellOpen)loadNotifs();return;}
+  if(a==="bellClose"){ui.bellOpen=false;return;}
+  if(a==="notifAll"){rpc("notif_read",{p_token:AUTH.token,p_ids:null}).then(loadNotifs).catch(function(){});NOTIF.items.forEach(function(n){n.read=true;});NOTIF.unread=0;updateBell();return;}
+  if(a==="notifOpen"){var nid=+id,lk=el.getAttribute("data-link")||"dashboard";NOTIF.items.forEach(function(n){if(n.id===nid&&!n.read){n.read=true;NOTIF.unread=Math.max(0,NOTIF.unread-1);}});rpc("notif_read",{p_token:AUTH.token,p_ids:[nid]}).catch(function(){});ui.bellOpen=false;if(location.hash==="#"+lk)render();else location.hash="#"+lk;return;}
+  if(a==="pushOn"){enablePush().catch(function(err){toast(err.message||"Yoqib bo\'lmadi",true);});return;}
+  if(a==="pushOff"){disablePush();return;}
+  if(a==="pushTest"){rpc("notif_test",{p_token:AUTH.token}).then(function(){toast("Yuborildi — bir necha soniyada keladi");setTimeout(loadNotifs,4000);}).catch(function(err){toast(err.message,true);});return;}
+  if(a==="pushHintX"){ls("fe_push_hint","1");render();return;}
   if(a==="msgTab"){ui.msgTab=id;render();markAnnsRead();return;}
   if(a==="tkFilter"){ui.tkFilter=id;render();return;}
   if(a==="tStatus"){setBusy(1);rpc("ticket_status",{p_token:AUTH.token,p_ticket:+id,p_status:el.getAttribute("data-v")}).then(function(){toast("Holat yangilandi");return loadMsgs();}).catch(function(err){toast(err.message,true);}).finally(function(){setBusy(-1);});return;}

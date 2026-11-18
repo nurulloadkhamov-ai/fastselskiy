@@ -56,3 +56,11 @@ Bot Supabase Edge Function sifatida ishlaydi (`supabase/functions/telegram/index
 - **Bosh admin** (filial tanlanmagan) — hamma filiallarni boshqaradi, sozlamalar va filial qo'shish faqat unda.
 - **Filial admini** — Admin panel → Login-parollar → Rol: «Admin», «Qaysi filial»: kerakli filial. U faqat o'z filialining ustozlari, xodimlari, baholari, shikoyatlari, vazifalari, topshiriqlari, login-parollari, murojaatlari va xabarlarini boshqaradi. Cheklov serverda tekshiriladi: boshqa filial ma'lumotini o'zgartirishga urinish e'tiborsiz qoladi.
 - Botda filial admini hisobot va bildirishnomalarni faqat o'z filiali bo'yicha oladi (filiallar reytingi — hammasi).
+
+## Bildirishnomalar (🔔 va telefon push)
+
+1. Bot kodini (`supabase/functions/telegram/index.ts`) yangilab **Deploy** qiling.
+2. `notifications.sql` ni SQL Editor'da ishga tushiring (push kalitlari avtomatik yaratiladi). Tekshirish: `select public.push_public_key();`
+3. Har bir foydalanuvchi: **Profil → 📱 Telefon bildirishnomalari → Yoqish**. iPhone'da avval Safari → Ulashish → «Bosh ekranga qo'shish», keyin ikonkadan kirib yoqiladi (iOS 16.4+).
+
+Saytdagi 🔔 qo'ng'iroqcha hammada avtomatik ishlaydi: yangi topshiriq, baho, shikoyat, murojaat javobi, menejer xabari, vazifa vaqti eslatmasi.

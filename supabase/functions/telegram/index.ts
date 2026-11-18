@@ -92,24 +92,25 @@ const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 const ROLES: Record<string, string> = { reception: "Receptionist", cleaner: "Cleaner", academic: "Academic support" };
 
 // ---------------- Ma'lumotlar va hisob-kitob (saytdagi bilan bir xil) ----------------
-type Ctx = { S: any; LOGS: Record<string, { s: string; at: string }>; accounts: any[] };
+type Ctx = { S: any; LOGS: Record<string, { s: string; at: string }>; accounts: any[]; all: any[] };
 async function loadCtx(): Promise<Ctx> {
   const st = await db("app_state?id=eq.1&select=data");
   const S = (st && st[0] && st[0].data) || null;
   const logs = await db(`duty_logs?select=day,duty_id,status,at&day=gte.${addDays(today(), -40)}`);
   const LOGS: Ctx["LOGS"] = {};
   for (const l of logs || []) LOGS[`${l.day}|${l.duty_id}`] = { s: l.status, at: l.at };
-  const accounts = await db("accounts?select=username,role,person_id,branch_id,tg_chat_id&tg_chat_id=not.is.null");
+  const all = (await db("accounts?select=username,role,person_id,branch_id,tg_chat_id")) || [];
+  const accounts = all.filter((a: any) => a.tg_chat_id);
   if (S) {
     S.settings = Object.assign({ lateMin: 30, tw: { lesson: 40, manager: 30, tasks: 15, complaints: 15 }, bw: { teachers: 40, staff: 30, growth: 30 } }, S.settings || {});
     for (const k of ["branches", "teachers", "evals", "ratings", "complaints", "staff", "duties", "tasks"]) if (!Array.isArray(S[k])) S[k] = [];
   }
-  return { S, LOGS, accounts: accounts || [] };
+  return { S, LOGS, accounts, all };
 }
 const byId = (a: any[], id: string) => a.find((x) => x.id === id) || null;
 // Filial adminlari: branch_id bo'sh — bosh admin (hamma filial), aks holda faqat o'z filiali
 function personBranch(c: Ctx, role: string, pid: string) { const p = role === "teacher" ? byId(c.S.teachers, pid) : role === "staff" ? byId(c.S.staff, pid) : null; return p ? p.branchId : null; }
-function adminsFor(c: Ctx, branchId: string | null) { return c.accounts.filter((a) => a.role === "admin" && (!a.branch_id || a.branch_id === branchId)); }
+function adminsFor(c: Ctx, branchId: string | null, everyone = false) { return (everyone ? c.all : c.accounts).filter((a) => a.role === "admin" && (!a.branch_id || a.branch_id === branchId)); }
 function scoped(c: Ctx, b: string | null): Ctx {
   if (!b || !c.S) return c;
   const S = c.S, tset = new Set(S.teachers.filter((t: any) => t.branchId === b).map((t: any) => t.id)), sset = new Set(S.staff.filter((t: any) => t.branchId === b).map((t: any) => t.id));
@@ -295,30 +296,33 @@ async function loadTicket(id: number) {
 }
 async function jobNotify(b: any) {
   const c = await loadCtx(); if (!c.S) return;
-  let admins = c.accounts.filter((a) => a.role === "admin");
   if (b.event === "ticket_new" || b.event === "ticket_reply" || b.event === "ticket_status") {
     const x = await loadTicket(Number(b.id)); if (!x) return;
     const { t, replies, acc } = x;
-    admins = adminsFor(c, acc ? personBranch(c, acc.role, acc.person_id) : null);
+    const admins = adminsFor(c, acc ? personBranch(c, acc.role, acc.person_id) : null, true);
+    const kindName = t.kind === "muammo" ? "muammo" : "taklif";
     if (b.event === "ticket_new") {
-      for (const a of admins) await send(a.tg_chat_id, "🆕 <b>Yangi murojaat</b>\n\n" + ticketText(c, t, acc), adminTicketBtns(t.id)).catch(() => {});
+      await deliver(c, admins, { kind: "ticket", title: `🆕 Yangi ${kindName} #${t.id}`, body: `${authorLabel(c, t, acc)}: ${t.text}`, link: "xabarlar" },
+        { text: "🆕 <b>Yangi murojaat</b>\n\n" + ticketText(c, t, acc), btns: adminTicketBtns(t.id) });
     } else if (b.event === "ticket_reply") {
       const r = replies.find((y: any) => y.id === Number(b.reply_id)); if (!r) return;
       if (r.from_admin) {
-        if (acc && acc.tg_chat_id) await send(acc.tg_chat_id, `💬 <b>Menejer javobi</b> · murojaat #${t.id}\n\n<i>${esc(t.text.slice(0, 200))}</i>\n\n${esc(r.text)}`, [[{ text: "✍️ Javob yozish", callback_data: `r:${t.id}` }]]).catch(() => {});
+        await deliver(c, [acc], { kind: "reply", title: `💬 Menejer javobi · #${t.id}`, body: r.text, link: "xabarlar" },
+          { text: `💬 <b>Menejer javobi</b> · murojaat #${t.id}\n\n<i>${esc(t.text.slice(0, 200))}</i>\n\n${esc(r.text)}`, btns: [[{ text: "✍️ Javob yozish", callback_data: `r:${t.id}` }]] });
       } else {
-        for (const a of admins) await send(a.tg_chat_id, `💬 <b>Murojaat #${t.id} ga yangi xabar</b>\n👤 ${esc(authorLabel(c, t, acc))}\n\n${esc(r.text)}`, adminTicketBtns(t.id)).catch(() => {});
+        await deliver(c, admins, { kind: "reply", title: `💬 Murojaat #${t.id}: yangi xabar`, body: `${authorLabel(c, t, acc)}: ${r.text}`, link: "xabarlar" },
+          { text: `💬 <b>Murojaat #${t.id} ga yangi xabar</b>\n👤 ${esc(authorLabel(c, t, acc))}\n\n${esc(r.text)}`, btns: adminTicketBtns(t.id) });
       }
-    } else if (acc && acc.tg_chat_id) {
-      await send(acc.tg_chat_id, `📋 Murojaatingiz <b>#${t.id}</b> holati: <b>${TSTAT[t.status]}</b>\n\n<i>${esc(t.text.slice(0, 300))}</i>`).catch(() => {});
+    } else {
+      await deliver(c, [acc], { kind: "ticket", title: `📋 Murojaat #${t.id}: ${TSTAT[t.status]}`, body: t.text, link: "xabarlar" },
+        { text: `📋 Murojaatingiz <b>#${t.id}</b> holati: <b>${TSTAT[t.status]}</b>\n\n<i>${esc(t.text.slice(0, 300))}</i>` });
     }
     return;
   }
   if (b.event === "ann") {
     const an = (await db(`announcements?id=eq.${Number(b.id)}&select=*`))[0]; if (!an) return;
-    for (const a of c.accounts.filter((x) => (an.recipients || []).includes(x.username))) {
-      await send(a.tg_chat_id, `📢 <b>Menejerdan xabar</b>\n\n${esc(an.text)}`, [[{ text: "👍 O‘qidim", callback_data: `a:${an.id}` }]]).catch(() => {});
-    }
+    await deliver(c, c.all.filter((x) => (an.recipients || []).includes(x.username)), { kind: "ann", title: "📢 Menejerdan xabar", body: an.text, link: "xabarlar" },
+      { text: `📢 <b>Menejerdan xabar</b>\n\n${esc(an.text)}`, btns: [[{ text: "👍 O‘qidim", callback_data: `a:${an.id}` }]] });
   }
 }
 function kindButtons(prefix: string): Btn[][] {
@@ -609,24 +613,27 @@ async function jobWeekly() {
 async function jobReminders() {
   const c = await loadCtx(); if (!c.S) return;
   const T = today(), now = nowMin();
-  for (const { a, p } of await linkedPeople(c)) {
-    if (a.role !== "staff") continue;
+  for (const a of c.all.filter((x) => x.role === "staff")) {
+    const p = byId(c.S.staff, a.person_id); if (!p) continue;
     for (const d of dutiesOn(c, p.id, T)) {
       const due = hm(d.time);
       if (due > now || now - due > 25 || c.LOGS[`${T}|${d.id}`]) continue;
       if (!(await once(`r|${T}|${d.id}`))) continue;
-      try { await send(a.tg_chat_id, `⏰ <b>Vaqti bo‘ldi — ${d.time}</b>\n${esc(d.title)}\n\n<i>${c.S.settings.lateMin} daqiqa ichida belgilasangiz — vaqtida hisoblanadi.</i>`, [[{ text: "✅ Bajarildi", callback_data: `t:${d.id}` }]]); } catch (_) { /* davom */ }
+      await deliver(c, [a], { kind: "duty", title: `⏰ ${d.time} — vaqti bo‘ldi`, body: `${d.title}. ${c.S.settings.lateMin} daqiqa ichida belgilang.`, link: "xodimlar" },
+        { text: `⏰ <b>Vaqti bo‘ldi — ${d.time}</b>\n${esc(d.title)}\n\n<i>${c.S.settings.lateMin} daqiqa ichida belgilasangiz — vaqtida hisoblanadi.</i>`, btns: [[{ text: "✅ Bajarildi", callback_data: `t:${d.id}` }]] });
     }
   }
   // Topshiriq muddati bugun tugaydi (soat 15:00 dan keyin bir marta)
   if (now >= 15 * 60) {
     for (const k of c.S.tasks.filter((k: any) => k.status !== "bajarildi" && k.deadline === T)) {
-      const a = c.accounts.find((x) => x.role === k.type && x.person_id === k.assigneeId); if (!a) continue;
+      const a = c.all.find((x) => x.role === k.type && x.person_id === k.assigneeId); if (!a) continue;
       if (!(await once(`k|${T}|${k.id}`))) continue;
-      try { await send(a.tg_chat_id, `⏳ <b>Topshiriq muddati bugun tugaydi</b>\n${esc(k.title)}`, [[{ text: "✅ Bajarildi", callback_data: `k:${k.id}` }]]); } catch (_) { /* davom */ }
+      await deliver(c, [a], { kind: "task", title: "⏳ Topshiriq muddati bugun tugaydi", body: k.title, link: "topshiriqlar" },
+        { text: `⏳ <b>Topshiriq muddati bugun tugaydi</b>\n${esc(k.title)}`, btns: [[{ text: "✅ Bajarildi", callback_data: `k:${k.id}` }]] });
     }
   }
   await db(`tg_sent?at=lt.${new Date(Date.now() - 4 * 86400e3).toISOString()}`, { method: "DELETE" });
+  if (now < 10) await db(`notifications?created_at=lt.${new Date(Date.now() - 60 * 86400e3).toISOString()}`, { method: "DELETE" }).catch(() => {});
 }
 async function jobDiff(old: any) {
   const c = await loadCtx(); if (!c.S || !old) return;
@@ -639,25 +646,31 @@ async function jobDiff(old: any) {
   const confComp = S.complaints.filter((x: any) => x.status === "tasdiqlangan" && old.complaints && old.complaints[x.id] && old.complaints[x.id] !== "tasdiqlangan");
   // Demo yuklash kabi ommaviy o'zgarishlarda xabar yubormaymiz
   if (newTasks.length + newEvals.length + newRatings.length + newComp.length > 15) return;
-  const accOf = (type: string, pid: string) => c.accounts.find((a) => a.role === type && a.person_id === pid);
-  const admins = c.accounts.filter((a) => a.role === "admin");
+  const accOf = (type: string, pid: string) => c.all.find((a) => a.role === type && a.person_id === pid);
   for (const k of newTasks) {
-    const a = accOf(k.type, k.assigneeId); if (!a) continue;
-    await send(a.tg_chat_id, `📌 <b>Yangi topshiriq</b>\n${esc(k.title)}${k.desc ? `\n<i>${esc(k.desc)}</i>` : ""}\n\nMuddat: <b>${fmt(k.deadline)}</b> · muhimlik: ${esc(k.priority)}`, [[{ text: "✅ Bajarildi", callback_data: `k:${k.id}` }]]).catch(() => {});
+    await deliver(c, [accOf(k.type, k.assigneeId)], { kind: "task", title: "📌 Yangi topshiriq", body: `${k.title} · muddat: ${fmt(k.deadline)}`, link: "topshiriqlar" },
+      { text: `📌 <b>Yangi topshiriq</b>\n${esc(k.title)}${k.desc ? `\n<i>${esc(k.desc)}</i>` : ""}\n\nMuddat: <b>${fmt(k.deadline)}</b> · muhimlik: ${esc(k.priority)}`, btns: [[{ text: "✅ Bajarildi", callback_data: `k:${k.id}` }]] });
   }
-  for (const k of doneTasks) for (const a of adminsFor(c, personBranch(c, k.type, k.assigneeId))) await send(a.tg_chat_id, `✅ <b>Topshiriq bajarildi</b>\n${esc(k.title)} — ${esc(assignee(c, k))}`).catch(() => {});
+  for (const k of doneTasks) {
+    await deliver(c, adminsFor(c, personBranch(c, k.type, k.assigneeId), true), { kind: "task", title: "✅ Topshiriq bajarildi", body: `${k.title} — ${assignee(c, k)}`, link: "topshiriqlar" },
+      { text: `✅ <b>Topshiriq bajarildi</b>\n${esc(k.title)} — ${esc(assignee(c, k))}` });
+  }
   for (const e of newEvals) {
-    const a = accOf("teacher", e.teacherId); if (!a) continue;
-    await send(a.tg_chat_id, `📝 <b>Darsingiz baholandi</b> · ${fmt(e.date)}\nO‘rtacha: <b>${r1(avg(e.c))}</b>/10\nTayyorgarlik ${e.c[0]} · Metodika ${e.c[1]} · Faollik ${e.c[2]} · Vaqt ${e.c[3]}${e.note ? `\n<i>${esc(e.note)}</i>` : ""}`).catch(() => {});
+    await deliver(c, [accOf("teacher", e.teacherId)], { kind: "eval", title: `📝 Darsingiz baholandi: ${r1(avg(e.c))}/10`, body: `Tayyorgarlik ${e.c[0]} · Metodika ${e.c[1]} · Faollik ${e.c[2]} · Vaqt ${e.c[3]}${e.note ? " — " + e.note : ""}`, link: "ustozlar" },
+      { text: `📝 <b>Darsingiz baholandi</b> · ${fmt(e.date)}\nO‘rtacha: <b>${r1(avg(e.c))}</b>/10\nTayyorgarlik ${e.c[0]} · Metodika ${e.c[1]} · Faollik ${e.c[2]} · Vaqt ${e.c[3]}${e.note ? `\n<i>${esc(e.note)}</i>` : ""}` });
   }
   for (const r of newRatings) {
-    const a = accOf("teacher", r.teacherId); if (!a) continue;
-    await send(a.tg_chat_id, `⭐ <b>Menejer bahosi</b>\n${esc(r.work)}: <b>${r.score}/10</b>${r.comment ? `\n<i>${esc(r.comment)}</i>` : ""}`).catch(() => {});
+    await deliver(c, [accOf("teacher", r.teacherId)], { kind: "rating", title: `⭐ Menejer bahosi: ${r.score}/10`, body: r.work + (r.comment ? " — " + r.comment : ""), link: "ustozlar" },
+      { text: `⭐ <b>Menejer bahosi</b>\n${esc(r.work)}: <b>${r.score}/10</b>${r.comment ? `\n<i>${esc(r.comment)}</i>` : ""}` });
   }
-  for (const x of newComp) { const t = byId(S.teachers, x.teacherId); for (const a of adminsFor(c, t ? t.branchId : null)) await send(a.tg_chat_id, `⚠️ <b>Yangi shikoyat</b> — ${esc(t ? t.name : "—")}\n${esc(x.text)} (${esc(x.source)})\n\nKo‘rib chiqing: sayt → Admin panel → Baholash va shikoyatlar.`).catch(() => {}); }
+  for (const x of newComp) {
+    const t = byId(S.teachers, x.teacherId);
+    await deliver(c, adminsFor(c, t ? t.branchId : null, true), { kind: "complaint", title: `⚠️ Yangi shikoyat — ${t ? t.name : "—"}`, body: `${x.text} (${x.source})`, link: "admin" },
+      { text: `⚠️ <b>Yangi shikoyat</b> — ${esc(t ? t.name : "—")}\n${esc(x.text)} (${esc(x.source)})\n\nKo‘rib chiqing: sayt → Admin panel → Baholash va shikoyatlar.` });
+  }
   for (const x of confComp) {
-    const a = accOf("teacher", x.teacherId); if (!a) continue;
-    await send(a.tg_chat_id, `⚠️ <b>Sizga kelgan shikoyat tasdiqlandi</b> · ${fmt(x.date)}\n${esc(x.text)}\n\nBu reytingingizga ta’sir qiladi. Savollar bo‘lsa, menejeringiz bilan gaplashing.`).catch(() => {});
+    await deliver(c, [accOf("teacher", x.teacherId)], { kind: "complaint", title: "⚠️ Sizga kelgan shikoyat tasdiqlandi", body: x.text, link: "ustozlar" },
+      { text: `⚠️ <b>Sizga kelgan shikoyat tasdiqlandi</b> · ${fmt(x.date)}\n${esc(x.text)}\n\nBu reytingingizga ta’sir qiladi. Savollar bo‘lsa, menejeringiz bilan gaplashing.` });
   }
 }
 const CMD_VERSION = "2";
@@ -689,6 +702,69 @@ async function jobSetup() {
   return res;
 }
 
+
+// ---------------- Web Push (RFC 8291 shifrlash + RFC 8292 VAPID) ----------------
+const enc = new TextEncoder();
+function b64u(b: Uint8Array) { let s = ""; for (const x of b) s += String.fromCharCode(x); return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
+function unb64u(s: string) { s = s.replace(/-/g, "+").replace(/_/g, "/"); while (s.length % 4) s += "="; return Uint8Array.from(atob(s), (ch) => ch.charCodeAt(0)); }
+function concat(...a: Uint8Array[]) { const r = new Uint8Array(a.reduce((n, x) => n + x.length, 0)); let o = 0; for (const x of a) { r.set(x, o); o += x.length; } return r; }
+async function hkdf(salt: any, ikm: any, info: any, len: number) {
+  const k = await crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
+  return new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt, info }, k, len * 8));
+}
+async function ensureVapid() {
+  if (CFG.vapid_public && CFG.vapid_private_jwk) return;
+  const kp = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]) as CryptoKeyPair;
+  const pub = b64u(new Uint8Array(await crypto.subtle.exportKey("raw", kp.publicKey)));
+  const jwk = JSON.stringify(await crypto.subtle.exportKey("jwk", kp.privateKey));
+  await setCfg("vapid_public", pub); await setCfg("vapid_private_jwk", jwk);
+  CFG.vapid_public = pub; CFG.vapid_private_jwk = jwk;
+}
+async function vapidAuth(endpoint: string) {
+  const header = b64u(enc.encode(JSON.stringify({ typ: "JWT", alg: "ES256" })));
+  const claims = b64u(enc.encode(JSON.stringify({ aud: new URL(endpoint).origin, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: CFG.site_url || "mailto:noreply@example.com" })));
+  const jwk = JSON.parse(CFG.vapid_private_jwk); delete jwk.key_ops;
+  const key = await crypto.subtle.importKey("jwk", jwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
+  const sig = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, enc.encode(header + "." + claims) as any));
+  return `vapid t=${header}.${claims}.${b64u(sig)}, k=${CFG.vapid_public}`;
+}
+async function encryptPush(p256dh: string, auth: string, data: any) {
+  const ua = unb64u(p256dh), authSecret = unb64u(auth);
+  const eph = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]) as CryptoKeyPair;
+  const asPub = new Uint8Array(await crypto.subtle.exportKey("raw", eph.publicKey));
+  const uaKey = await crypto.subtle.importKey("raw", ua as any, { name: "ECDH", namedCurve: "P-256" }, false, []);
+  const secret = new Uint8Array(await crypto.subtle.deriveBits({ name: "ECDH", public: uaKey } as any, eph.privateKey, 256));
+  const ikm = await hkdf(authSecret, secret, concat(enc.encode("WebPush: info\0"), ua, asPub), 32);
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const cek = await hkdf(salt, ikm, enc.encode("Content-Encoding: aes128gcm\0"), 16);
+  const nonce = await hkdf(salt, ikm, enc.encode("Content-Encoding: nonce\0"), 12);
+  const key = await crypto.subtle.importKey("raw", cek as any, "AES-GCM", false, ["encrypt"]);
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce as any }, key, concat(data, new Uint8Array([2])) as any));
+  return concat(salt, new Uint8Array([0, 0, 16, 0]), new Uint8Array([asPub.length]), asPub, ct);
+}
+async function sendPush(sub: any, payload: unknown) {
+  const body = await encryptPush(sub.p256dh, sub.auth, enc.encode(JSON.stringify(payload)));
+  const r = await fetch(sub.endpoint, { method: "POST", body: body as any, headers: {
+    "Content-Encoding": "aes128gcm", "Content-Type": "application/octet-stream", TTL: "86400", Urgency: "high", Authorization: await vapidAuth(sub.endpoint) } });
+  if (r.status === 404 || r.status === 410) await db(`push_subs?endpoint=eq.${encodeURIComponent(sub.endpoint)}`, { method: "DELETE" });
+  return r.status;
+}
+
+// ---------------- Bitta hodisani hamma joyga yetkazish: sayt 🔔 + telefon push + Telegram ----------------
+type Note = { kind: string; title: string; body: string; link: string };
+async function deliver(c: Ctx, users: any[], n: Note, tgMsg?: { text: string; btns?: Btn[][] }) {
+  const uniq = [...new Map(users.filter(Boolean).map((u) => [u.username, u])).values()];
+  if (!uniq.length) return;
+  try { await db("notifications", { method: "POST", body: JSON.stringify(uniq.map((u) => ({ username: u.username, kind: n.kind, title: n.title.slice(0, 200), body: n.body.slice(0, 600), link: n.link }))) }); } catch (_) { /* jadval hali yo'q bo'lishi mumkin */ }
+  try {
+    await ensureVapid();
+    const list = encodeURIComponent("(" + uniq.map((u) => `"${u.username}"`).join(",") + ")");
+    const subs = await db(`push_subs?select=endpoint,p256dh,auth,username&username=in.${list}`);
+    for (const s of subs || []) { try { await sendPush(s, { title: n.title, body: n.body.slice(0, 240), url: (CFG.site_url || "") + "#" + n.link, tag: n.kind + "-" + Date.now() }); } catch (_) { /* davom */ } }
+  } catch (_) { /* push sozlanmagan */ }
+  if (tgMsg) for (const u of uniq) if (u.tg_chat_id) await send(u.tg_chat_id, tgMsg.text, tgMsg.btns).catch(() => {});
+}
+
 // ---------------- Kirish nuqtasi ----------------
 Deno.serve(async (req) => {
   if (req.method !== "POST") return new Response("Fast Education bot", { status: 200 });
@@ -711,6 +787,11 @@ Deno.serve(async (req) => {
       else if (job === "reminders") await jobReminders();
       else if (job === "diff") await jobDiff(body.old);
       else if (job === "notify") await jobNotify(body);
+      else if (job === "vapid") { await ensureVapid(); return new Response("ok " + CFG.vapid_public); }
+      else if (job === "push_test") {
+        const c = await loadCtx();
+        await deliver(c, c.all.filter((a) => a.username === body.username), { kind: "test", title: "🔔 Sinov bildirishnomasi", body: "Bildirishnomalar ishlayapti! Fast Education.", link: "profil" });
+      }
       return new Response("ok");
     }
     return new Response("forbidden", { status: 403 });
