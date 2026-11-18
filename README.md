@@ -64,3 +64,11 @@ Bot Supabase Edge Function sifatida ishlaydi (`supabase/functions/telegram/index
 3. Har bir foydalanuvchi: **Profil → 📱 Telefon bildirishnomalari → Yoqish**. iPhone'da avval Safari → Ulashish → «Bosh ekranga qo'shish», keyin ikonkadan kirib yoqiladi (iOS 16.4+).
 
 Saytdagi 🔔 qo'ng'iroqcha hammada avtomatik ishlaydi: yangi topshiriq, baho, shikoyat, murojaat javobi, menejer xabari, vazifa vaqti eslatmasi.
+
+## Smenali xodimlar
+
+`shift.sql` ni SQL Editor'da ishga tushiring (branch_admin.sql dan keyin) va bot kodini yangilab Deploy qiling.
+
+- Admin panel → Xodimlar → «Ish tartibi» ustunida xodimni **Smenali** qiling (yoki qo'shishda katakchani belgilang).
+- Xodim kelgan kuni saytda («Xodimlar» sahifasi) yoki botda **✅ Ishga keldim** ni bosadi — shu kunning to-do ro'yxati yoqiladi. Kelmagan kunlar hisobga olinmaydi.
+- Kechikish ishga kelgan vaqtdan hisoblanadi. Admin kelganlikni istalgan kun uchun belgilay/olib tashlay oladi.

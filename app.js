@@ -34,7 +34,7 @@ function ls(k,v){try{if(v===undefined)return localStorage.getItem(k);if(v===null
 function clone(o){return JSON.parse(JSON.stringify(o));}
 
 /* ============ Server (Supabase RPC) ============ */
-var ERRORS={login_failed:"Login yoki parol noto'g'ri",no_session:"Sessiya tugadi, qayta kiring",not_admin:"Bu amal faqat admin uchun",not_allowed:"Bu amalga ruxsatingiz yo'q",only_today:"Faqat bugungi vazifani belgilash mumkin",wrong_password:"Eski parol noto'g'ri",short_password:"Parol kamida 6 belgidan iborat bo'lsin",bad_username:"Login 3–32 belgi: lotin harflari, raqam, . _ -",password_required:"Yangi foydalanuvchi uchun parol kiriting",cannot_delete_self:"O'zingizni o'chira olmaysiz",cannot_demote_self:"O'zingizning admin rolingizni o'zgartira olmaysiz",username_taken:"Bu login band — boshqasini tanlang",no_recipients:"Bu guruhda login berilgan odam yo'q",empty_text:"Matn bo'sh",ticket_not_found:"Murojaat topilmadi",already_done:"Topshiriq allaqachon bajarilgan",duty_not_found:"Vazifa topilmadi",task_not_found:"Topshiriq topilmadi"};
+var ERRORS={login_failed:"Login yoki parol noto'g'ri",no_session:"Sessiya tugadi, qayta kiring",not_admin:"Bu amal faqat admin uchun",not_allowed:"Bu amalga ruxsatingiz yo'q",only_today:"Faqat bugungi vazifani belgilash mumkin",wrong_password:"Eski parol noto'g'ri",short_password:"Parol kamida 6 belgidan iborat bo'lsin",bad_username:"Login 3–32 belgi: lotin harflari, raqam, . _ -",password_required:"Yangi foydalanuvchi uchun parol kiriting",cannot_delete_self:"O'zingizni o'chira olmaysiz",cannot_demote_self:"O'zingizning admin rolingizni o'zgartira olmaysiz",username_taken:"Bu login band — boshqasini tanlang",no_recipients:"Bu guruhda login berilgan odam yo'q",empty_text:"Matn bo'sh",ticket_not_found:"Murojaat topilmadi",already_done:"Topshiriq allaqachon bajarilgan",not_checked_in:"Avval «Ishga keldim» tugmasini bosing",staff_not_found:"Xodim topilmadi",duty_not_found:"Vazifa topilmadi",task_not_found:"Topshiriq topilmadi"};
 async function rpc(fn,args){
   var res;
   try{
@@ -159,12 +159,17 @@ function teacherStats(t){
 /* Shikoyat matnlari faqat adminga ko'rinadi; reyting adolatli chiqishi uchun admin har saqlashda
    har bir ustozning 90 kunlik tasdiqlangan shikoyatlari sonini (cpConf90) yozib qo'yadi. */
 function stampComplaintCounts(D){var from=addDays(todayISO(),-90);D.teachers.forEach(function(t){t.cpConf90=D.complaints.filter(function(c){return c.teacherId===t.id&&c.status==="tasdiqlangan"&&c.date>=from;}).length;});}
-function dutiesOn(staffId,date){var d=dow(date);return S.duties.filter(function(x){return x.staffId===staffId&&x.days.indexOf(d)>=0;}).sort(function(a,b){return a.time<b.time?-1:1;});}
+function isShift(staffId){var p=byId(S.staff,staffId);return !!(p&&p.shift);}
+function checkinOf(date,staffId){return LOGS[date+"|@in:"+staffId]||null;}
+/* Smenali xodim: kechikish ishga kelgan vaqtdan hisoblanadi */
+function dueMin(x,date){var t=hmToMin(x.time);if(isShift(x.staffId)){var c=checkinOf(date,x.staffId);if(c&&/^[0-9]{1,2}:[0-9]{2}$/.test(c.at||""))t=Math.max(t,hmToMin(c.at));}return t;}
+function rawDutiesOn(staffId,date){var d=dow(date);return S.duties.filter(function(x){return x.staffId===staffId&&x.days.indexOf(d)>=0;}).sort(function(a,b){return a.time<b.time?-1:1;});}
+function dutiesOn(staffId,date){if(isShift(staffId)&&!checkinOf(date,staffId))return [];var d=dow(date);return S.duties.filter(function(x){return x.staffId===staffId&&x.days.indexOf(d)>=0;}).sort(function(a,b){return a.time<b.time?-1:1;});}
 function logOf(date,dutyId){return LOGS[date+"|"+dutyId]||null;}
 function effRange(staffId,from,to){
   var assigned=0,pts=0,d=from,T=todayISO(),hm=hmToMin(nowHM());
   while(d<=to){dutiesOn(staffId,d).forEach(function(x){
-      if(d===T&&hmToMin(x.time)+S.settings.lateMin>hm&&!logOf(d,x.id))return;
+      if(d===T&&dueMin(x,d)+S.settings.lateMin>hm&&!logOf(d,x.id))return;
       assigned++;var l=logOf(d,x.id);if(l)pts+=l.s==="d"?1:0.5;});
     d=addDays(d,1);}
   return assigned?pts/assigned*100:null;
@@ -338,15 +343,25 @@ function staffCard(s,st){
   var done=ds.filter(function(d){return logOf(date,d.id);}).length;
   var items=ds.map(function(d){var l=logOf(date,d.id),stt;
     if(l)stt=l.s==="d"?'<span class="badge b-good">✓ '+esc(l.at||"")+'</span>':'<span class="badge b-warn">Kechikdi '+esc(l.at||"")+'</span>';
-    else if(date<T||hmToMin(d.time)+S.settings.lateMin<hm)stt='<span class="badge b-bad">Bajarilmagan</span>';
+    else if(date<T||dueMin(d,date)+S.settings.lateMin<hm)stt='<span class="badge b-bad">Bajarilmagan</span>';
     else stt='<span class="badge b-neu">Kutilmoqda</span>';
     return '<div class="todo-item'+(l?" done":"")+'"><span class="t">'+d.time+'</span><button class="chk '+(l?(l.s==="d"?"d":"l"):"")+'" data-act="tick" data-id="'+d.id+'" '+(can?"":"disabled")+' aria-label="Belgilash">'+(l?"✓":"")+'</button><span class="ttl">'+esc(d.title)+'</span>'+stt+'</div>';}).join("");
   var tk=S.tasks.filter(function(k){return k.type==="staff"&&k.assigneeId===s.id&&k.status!=="bajarildi";});
   var isMe=me().role==="staff"&&me().person_id===s.id;
   return '<div class="card staff-card"'+(isMe?' style="border-color:#9DB4F5;box-shadow:0 0 0 3px var(--brand-soft)"':'')+'><div class="staff-head"><div class="ava" style="background:'+ROLE_COLORS[s.role]+'">'+initials(s.name)+'</div><div style="min-width:0"><b>'+esc(s.name)+'</b>'+(isMe?' <span class="badge b-pri">Siz</span>':'')+'<div class="muted small">'+ROLES[s.role]+' · '+esc(branchName(s.branchId))+'</div></div></div>'+
    '<div class="eff3"><div class="eff"><span>Kunlik</span><b>'+(st.day==null?"—":r0(st.day)+"%")+'</b></div><div class="eff"><span>Haftalik</span><b>'+(st.week==null?"—":r0(st.week)+"%")+'</b></div><div class="eff"><span>Oylik</span><b>'+(st.month==null?"—":r0(st.month)+"%")+'</b></div></div>'+
-   '<div class="flex between"><b class="small">Kunlik to-do · '+fmtDate(date)+'</b><span class="muted small">'+done+'/'+ds.length+'</span></div><div class="todo">'+(items||'<div class="empty small">Bu kunga vazifa yo\'q</div>')+'</div>'+
+   shiftBlock(s,date,can)+'<div class="flex between"><b class="small">Kunlik to-do · '+fmtDate(date)+'</b><span class="muted small">'+done+'/'+ds.length+'</span></div><div class="todo">'+(items||(s.shift&&!checkinOf(date,s.id)?'<div class="empty small">'+(date===T?'«Ishga keldim»ni bosgach vazifalar chiqadi':'Bu kuni ishga kelmagan — hisobga olinmaydi')+'</div>':'<div class="empty small">Bu kunga vazifa yo\'q</div>'))+'</div>'+
    (tk.length?'<div><b class="small">Ochiq topshiriqlar</b>'+tk.map(taskLine).join("")+'</div>':'')+'</div>';
+}
+function shiftBlock(s,date,can){
+  if(!s.shift)return "";
+  var c=checkinOf(date,s.id),T=todayISO(),n=0;for(var i=0;i<30;i++)if(checkinOf(addDays(T,-i),s.id))n++;
+  var canIn=isAdmin()?inScope(s.branchId):(me().role==="staff"&&me().person_id===s.id&&date===T&&!c);
+  var h='<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:var(--surface2);border:1px dashed var(--line);border-radius:10px;padding:10px 12px"><div><span class="badge b-pri">Smenali</span> <span class="small muted">Oxirgi 30 kunda: <b>'+n+'</b> kun keldi</span></div>';
+  if(c)h+='<span class="flex"><span class="badge b-good">Ishga keldi '+esc(c.at||"")+'</span>'+(isAdmin()&&canIn?'<button class="btn sm" data-act="checkin" data-id="'+s.id+'">Bekor</button>':'')+'</span>';
+  else if(canIn)h+='<button class="btn pri" data-act="checkin" data-id="'+s.id+'">✅ Ishga keldim</button>';
+  else h+='<span class="badge b-neu">'+(date===T?'Hali kelmagan':'Kelmagan')+'</span>';
+  return h+'</div>';
 }
 function viewTasks(){
   var T=todayISO(),f=[["ochiq","Ochiq"],["muddat","Muddati o'tgan"],["bajarildi","Bajarilgan"],["all","Barchasi"]],m=me();
@@ -586,8 +601,8 @@ function admTeachers(){
 }
 function admStaff(){
   if(!S.branches.length)return '<div class="card empty">Avval «Filiallar» bo\'limida filial qo\'shing</div>';
-  var h='<div class="card"><h3>Xodim qo\'shish</h3><form class="form" data-form="staff"><div class="row"><label>F.I.Sh.<input class="in" name="name" required></label><label>Lavozim<select class="in" name="role">'+Object.keys(ROLES).map(function(r){return '<option value="'+r+'">'+ROLES[r]+'</option>';}).join("")+'</select></label><label>Filial<select class="in" name="branchId">'+scB().map(function(b){return '<option value="'+b.id+'">'+esc(b.name)+'</option>';}).join("")+'</select></label></div>'+loginFields()+'<label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" name="std" checked> Lavozimga mos standart kunlik vazifalarni qo\'shish</label><button class="btn pri" type="submit" style="justify-self:start">Qo\'shish</button></form></div>';
-  h+='<div class="card mt scroll"><h3>Xodimlar ro\'yxati ('+scS().length+')</h3><table><thead><tr><th>F.I.Sh.</th><th>Lavozim</th><th>Filial</th><th class="num">Vazifalar</th><th>Login</th><th></th></tr></thead><tbody>'+scS().map(function(s){return '<tr><td><b>'+esc(s.name)+'</b></td><td>'+ROLES[s.role]+'</td><td>'+esc(branchName(s.branchId))+'</td><td class="num">'+S.duties.filter(function(d){return d.staffId===s.id;}).length+'</td><td>'+(accOf(s.id)?'<span class="badge b-good">'+esc(accOf(s.id))+'</span>':'<span class="badge b-neu">yo\'q</span>')+'</td><td class="num">'+delBtn("staff",s.id)+'</td></tr>';}).join("")+'</tbody></table></div>';
+  var h='<div class="card"><h3>Xodim qo\'shish</h3><form class="form" data-form="staff"><div class="row"><label>F.I.Sh.<input class="in" name="name" required></label><label>Lavozim<select class="in" name="role">'+Object.keys(ROLES).map(function(r){return '<option value="'+r+'">'+ROLES[r]+'</option>';}).join("")+'</select></label><label>Filial<select class="in" name="branchId">'+scB().map(function(b){return '<option value="'+b.id+'">'+esc(b.name)+'</option>';}).join("")+'</select></label></div>'+loginFields()+'<label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" name="std" checked> Lavozimga mos standart kunlik vazifalarni qo\'shish</label><label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" name="shift"> Smenali — ish kunlari aniq emas (kelgan kuni «Ishga keldim»ni bosadi)</label><button class="btn pri" type="submit" style="justify-self:start">Qo\'shish</button></form></div>';
+  h+='<div class="card mt scroll"><h3>Xodimlar ro\'yxati ('+scS().length+')</h3><table><thead><tr><th>F.I.Sh.</th><th>Lavozim</th><th>Filial</th><th class="num">Vazifalar</th><th>Ish tartibi</th><th>Login</th><th></th></tr></thead><tbody>'+scS().map(function(s){return '<tr><td><b>'+esc(s.name)+'</b></td><td>'+ROLES[s.role]+'</td><td>'+esc(branchName(s.branchId))+'</td><td class="num">'+S.duties.filter(function(d){return d.staffId===s.id;}).length+'</td><td><button class="btn sm'+(s.shift?' pri':'')+'" data-act="shiftToggle" data-id="'+s.id+'" title="Bosib almashtiring">'+(s.shift?'Smenali':'Doimiy jadval')+'</button></td><td>'+(accOf(s.id)?'<span class="badge b-good">'+esc(accOf(s.id))+'</span>':'<span class="badge b-neu">yo\'q</span>')+'</td><td class="num">'+delBtn("staff",s.id)+'</td></tr>';}).join("")+'</tbody></table></div>';
   return h;
 }
 function personName(a){if(a.role==="teacher"){var t=byId(scT(),a.person_id);return t?t.name:"—";}if(a.role==="staff"){var s=byId(scS(),a.person_id);return s?s.name+" ("+ROLES[s.role]+")":"—";}return "—";}
@@ -669,6 +684,9 @@ document.addEventListener("click",function(e){
   if(a==="reload"){loadErr="";render();load();return;}
   if(a==="adm"){e.preventDefault();ui.adm=id;ls("fe_adm_tab",id);if(ui.view!=="admin")location.hash="#admin";else render();return;}
   if(a==="logout"){var tk=AUTH&&AUTH.token;if(tk){unbindPushOnLogout(tk).finally(function(){rpc("logout",{p_token:tk}).catch(function(){});});}pushState="unknown";notifOk=false;NOTIF={items:[],unread:0};logoutLocal();return;}
+  if(a==="checkin"){var cd=ui.sDate,ck=cd+"|@in:"+id;el.disabled=true;setBusy(1);
+    rpc("checkin",{p_token:AUTH.token,p_day:cd,p_staff_id:id}).then(function(r){if(r.log){LOGS[ck]=r.log;if(!isAdmin())toast("Xush kelibsiz! Bugungi vazifalaringiz yoqildi ("+r.log.at+")");}else delete LOGS[ck];}).catch(function(err){toast(err.message,true);}).finally(function(){setBusy(-1);render();});
+    return;}
   if(a==="tick"){
     if(el.disabled)return;var date=ui.sDate,key=date+"|"+id;el.disabled=true;setBusy(1);
     rpc("tick",{p_token:AUTH.token,p_day:date,p_duty_id:id}).then(function(r){if(r.log)LOGS[key]=r.log;else delete LOGS[key];if(r.log&&r.log.s==="l"&&!isAdmin())toast("Belgilandi — kechikish bilan ("+r.log.at+")");}).catch(function(err){toast(err.message,true);}).finally(function(){setBusy(-1);render();});
@@ -707,6 +725,7 @@ document.addEventListener("click",function(e){
       stampComplaintCounts(D);
     },"O'chirildi").then(function(ok){if(ok&&(coll==="teachers"||coll==="staff"))deleteAccountsOf(id);});
     return;}
+  if(a==="shiftToggle"){commit(function(D){var x=byId(D.staff,id);if(x)x.shift=!x.shift;},"Ish tartibi o'zgartirildi");return;}
   if(a==="stdDuties"){var s=byId(S.staff,ui.admStaff);if(!s)return;var nd=defaultDuties(s.role).map(function(d){return {id:uid("d"),staffId:s.id,time:d[0],title:d[1],days:[1,2,3,4,5,6]};});commit(function(D){nd.forEach(function(x){D.duties.push(x);});},"Standart vazifalar qo'shildi");return;}
   if(a==="wipe"){if(ui.armed!=="wipe"){ui.armed="wipe";render();return;}ui.armed=null;var w=emptyData();w.settings=S.settings;w.branches=S.branches.map(function(b){return {id:b.id,name:b.name,students:[]};});seedServer({data:w,logs:{}});return;}
   if(a==="reseed"){if(ui.armed!=="reseed"){ui.armed="reseed";render();return;}ui.armed=null;var pk=seed();pk.data.settings=S.settings;seedServer(pk);return;}
@@ -754,7 +773,7 @@ document.addEventListener("submit",async function(e){
   else if(kind==="task"){var w=g("who").split(":");if(!w[1])return;var tk={id:uid("k"),type:w[0],assigneeId:w[1],title:g("title"),desc:g("desc"),deadline:g("deadline"),priority:g("priority"),status:"yangi",created:todayISO(),doneAt:null};ok=await commit(function(D){D.tasks.push(tk);},"Topshiriq berildi");}
   else if(kind==="duty"){var days=[0,1,2,3,4,5,6].filter(function(d){return fd.get("d"+d);});if(!days.length){toast("Kamida bitta kunni tanlang",true);return;}var du={id:uid("d"),staffId:ui.admStaff,time:g("time"),title:g("title"),days:days};ok=await commit(function(D){D.duties.push(du);},"Vazifa qo'shildi");}
   else if(kind==="teacher"){var t={id:uid("t"),name:g("name"),branchId:g("branchId"),subject:g("subject"),cpConf90:0};ok=await commit(function(D){D.teachers.push(t);},"Ustoz qo'shildi");if(ok&&g("lu"))await createLogin(g("lu"),g("lp"),"teacher",t.id);}
-  else if(kind==="staff"){var s={id:uid("s"),name:g("name"),role:g("role"),branchId:g("branchId")};var sd=fd.get("std")?defaultDuties(s.role).map(function(d){return {id:uid("d"),staffId:s.id,time:d[0],title:d[1],days:[1,2,3,4,5,6]};}):[];ok=await commit(function(D){D.staff.push(s);sd.forEach(function(x){D.duties.push(x);});},"Xodim qo'shildi");if(ok&&g("lu"))await createLogin(g("lu"),g("lp"),"staff",s.id);}
+  else if(kind==="staff"){var s={id:uid("s"),name:g("name"),role:g("role"),branchId:g("branchId"),shift:!!fd.get("shift")};var sd=fd.get("std")?defaultDuties(s.role).map(function(d){return {id:uid("d"),staffId:s.id,time:d[0],title:d[1],days:[1,2,3,4,5,6]};}):[];ok=await commit(function(D){D.staff.push(s);sd.forEach(function(x){D.duties.push(x);});},"Xodim qo'shildi");if(ok&&g("lu"))await createLogin(g("lu"),g("lp"),"staff",s.id);}
   else if(kind==="account"){var role=g("role");try{await rpc("upsert_account",{p_token:AUTH.token,p_username:g("u"),p_password:g("p"),p_role:role,p_person_id:role==="admin"?"":g("person"),p_branch_id:role==="admin"?g("branch"):""});toast("Saqlandi: "+g("u").toLowerCase());f.reset();}catch(err){toast(err.message,true);}await refreshAccounts();return;}
   else if(kind==="students"){var bid=g("branchId"),m=g("m"),c=n("c",0,1000000);ok=await commit(function(D){var b=byId(D.branches,bid);if(!b)return;var ex=b.students.filter(function(x){return x.m===m;})[0];if(ex)ex.c=c;else b.students.push({m:m,c:c});b.students.sort(function(x,y){return x.m<y.m?-1:1;});},"O'quvchilar soni saqlandi");}
   else if(kind==="branch"){var nb={id:uid("b"),name:g("name"),students:[{m:monthKey(new Date()),c:n("c",0,1000000)}]};ok=await commit(function(D){D.branches.push(nb);},"Filial qo'shildi");}

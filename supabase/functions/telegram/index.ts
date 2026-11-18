@@ -139,7 +139,20 @@ function teacherStats(c: Ctx, t: any) {
   const total = weighted([{ v: lesson == null ? null : lesson * 10, w: w.lesson }, { v: mgr == null ? null : mgr * 10, w: w.manager }, { v: tasksPct, w: w.tasks }, { v: comp, w: w.complaints }]);
   return { lesson, mgr, tasksPct, done, due: due.length, cpConf, cpNew: cp.filter((x: any) => x.status === "yangi").length, total, nEval: ev.length, nRate: rt.length };
 }
+// Smenali xodim: faqat «Ishga keldim» bosilgan kunlari vazifalar hisoblanadi
+function isShift(c: Ctx, staffId: string) { const p = byId(c.S.staff, staffId); return !!(p && p.shift); }
+function checkinOf(c: Ctx, date: string, staffId: string) { return c.LOGS[`${date}|@in:${staffId}`] || null; }
+function dueMin(c: Ctx, x: any, date: string) {
+  let t = hm(x.time);
+  if (isShift(c, x.staffId)) { const ci = checkinOf(c, date, x.staffId); if (ci && /^\d{1,2}:\d{2}$/.test(ci.at || "")) t = Math.max(t, hm(ci.at)); }
+  return t;
+}
+function rawDutiesOn(c: Ctx, staffId: string, date: string) {
+  const d = dow(date);
+  return c.S.duties.filter((x: any) => x.staffId === staffId && x.days.indexOf(d) >= 0);
+}
 function dutiesOn(c: Ctx, staffId: string, date: string) {
+  if (isShift(c, staffId) && !checkinOf(c, date, staffId)) return [];
   const d = dow(date);
   return c.S.duties.filter((x: any) => x.staffId === staffId && x.days.indexOf(d) >= 0).sort((a: any, b: any) => (a.time < b.time ? -1 : 1));
 }
@@ -148,7 +161,7 @@ function effRange(c: Ctx, staffId: string, from: string, to: string) {
   while (d <= to) {
     for (const x of dutiesOn(c, staffId, d)) {
       const l = c.LOGS[`${d}|${x.id}`];
-      if (d === T && hm(x.time) + c.S.settings.lateMin > now && !l) continue;
+      if (d === T && dueMin(c, x, d) + c.S.settings.lateMin > now && !l) continue;
       assigned++; if (l) pts += l.s === "d" ? 1 : 0.5;
     }
     d = addDays(d, 1);
@@ -175,13 +188,19 @@ function lvl(v: number | null) { return v == null ? "⚪" : v >= 85 ? "🟢" : v
 function siteBtn(): Btn[][] { return [[{ text: "🌐 Saytni ochish", url: CFG.site_url }]]; }
 function staffToday(c: Ctx, s: any) {
   const T = today(), now = nowMin(), ds = dutiesOn(c, s.id, T), st = staffStats(c, s);
+  if (s.shift && !checkinOf(c, T, s.id)) {
+    const n = rawDutiesOn(c, s.id, T).length;
+    return { text: `👋 <b>Bugun ishdamisiz?</b> · ${fmt(T)}\n\nSiz smenali xodimsiz. Ishga kelgan bo‘lsangiz, pastdagi tugmani bosing — bugungi ${n} ta vazifangiz yoqiladi. Kelmagan kuningiz hisobga olinmaydi.`,
+      btns: n ? [[{ text: "✅ Ishga keldim", callback_data: "in" }]] as Btn[][] : [] };
+  }
   const lines = ds.map((d: any) => {
     const l = c.LOGS[`${T}|${d.id}`];
-    const mark = l ? (l.s === "d" ? "✅" : "🟡") : hm(d.time) + c.S.settings.lateMin < now ? "❌" : "⬜";
+    const mark = l ? (l.s === "d" ? "✅" : "🟡") : dueMin(c, d, T) + c.S.settings.lateMin < now ? "❌" : "⬜";
     return `${mark} <b>${d.time}</b> — ${esc(d.title)}${l ? ` <i>(${l.s === "d" ? "" : "kechikib, "}${esc(l.at)})</i>` : ""}`;
   });
   const btns: Btn[][] = ds.filter((d: any) => !c.LOGS[`${T}|${d.id}`]).map((d: any) => [{ text: `✅ ${d.time} — ${d.title}`.slice(0, 60), callback_data: `t:${d.id}` }]);
-  const text = `📋 <b>Bugungi vazifalaringiz</b> · ${fmt(T)}\n\n` + (lines.length ? lines.join("\n") : "Bugun vazifa yo‘q 🎉") +
+  const ci = s.shift ? checkinOf(c, T, s.id) : null;
+  const text = `📋 <b>Bugungi vazifalaringiz</b> · ${fmt(T)}${ci ? ` · ishga keldingiz ${esc(ci.at)}` : ""}\n\n` + (lines.length ? lines.join("\n") : "Bugun vazifa yo‘q 🎉") +
     `\n\n📊 Samaradorlik: bugun <b>${st.day == null ? "—" : r0(st.day) + "%"}</b> · hafta <b>${st.week == null ? "—" : r0(st.week) + "%"}</b> · oy <b>${st.month == null ? "—" : r0(st.month) + "%"}</b>` +
     (btns.length ? `\n\nBajarganingizda tugmani bosing (vaqti server soati bo‘yicha yoziladi, ${c.S.settings.lateMin} daqiqadan kech — «kechikdi»):` : "");
   return { text, btns };
@@ -483,6 +502,14 @@ async function onCallback(q: any) {
   const acc = (await db(`accounts?tg_chat_id=eq.${chat}&select=username,role,person_id,branch_id`))[0];
   if (!acc) return answer("Avval saytdan Telegramni ulang", true);
   try {
+    if (data === "in") {
+      if (acc.role !== "staff" || !acc.person_id) { await answer(""); return; }
+      const r = await asUser(chat, "checkin", { p_day: today(), p_staff_id: acc.person_id });
+      await answer(`Xush kelibsiz! ${r.log ? r.log.at : ""}`);
+      const c = await loadCtx(); const p = personOf(c, acc);
+      if (p) { const m = staffToday(c, p); await edit(chat, msgId, m.text, m.btns); }
+      return;
+    }
     if (data.startsWith("t:")) {
       const dutyId = data.slice(2), T = today();
       let c = await loadCtx();
@@ -558,7 +585,7 @@ async function onCallback(q: any) {
     await answer("");
   } catch (e) {
     const m = String((e as Error).message);
-    const map: Record<string, string> = { only_today: "Faqat bugungi vazifani belgilash mumkin", not_allowed: "Bu sizning vazifangiz emas", already_done: "Allaqachon bajarilgan", duty_not_found: "Vazifa o‘chirilgan", task_not_found: "Topshiriq o‘chirilgan" };
+    const map: Record<string, string> = { only_today: "Faqat bugungi vazifani belgilash mumkin", not_checked_in: "Avval «Ishga keldim» tugmasini bosing", not_allowed: "Bu sizning vazifangiz emas", already_done: "Allaqachon bajarilgan", duty_not_found: "Vazifa o‘chirilgan", task_not_found: "Topshiriq o‘chirilgan" };
     await answer(map[m] || "Xatolik: " + m, true);
   }
 }
@@ -573,7 +600,7 @@ async function jobMorning() {
     try {
       if (a.role === "staff") {
         const m = staffToday(c, p);
-        if (dutiesOn(c, p.id, today()).length) await send(a.tg_chat_id, "☀️ Xayrli tong!\n\n" + m.text, m.btns);
+        if (rawDutiesOn(c, p.id, today()).length) await send(a.tg_chat_id, "☀️ Xayrli tong!\n\n" + m.text, m.btns);
         const t = myTasks(c, "staff", p.id); if (t.btns.length) await send(a.tg_chat_id, t.text, t.btns);
       } else if (a.role === "teacher") {
         const t = myTasks(c, "teacher", p.id); if (t.btns.length) await send(a.tg_chat_id, "☀️ Xayrli tong!\n\n" + t.text, t.btns);
