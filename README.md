@@ -72,3 +72,10 @@ Saytdagi 🔔 qo'ng'iroqcha hammada avtomatik ishlaydi: yangi topshiriq, baho, s
 - Admin panel → Xodimlar → «Ish tartibi» ustunida xodimni **Smenali** qiling (yoki qo'shishda katakchani belgilang).
 - Xodim kelgan kuni saytda («Xodimlar» sahifasi) yoki botda **✅ Ishga keldim** ni bosadi — shu kunning to-do ro'yxati yoqiladi. Kelmagan kunlar hisobga olinmaydi.
 - Kechikish ishga kelgan vaqtdan hisoblanadi. Admin kelganlikni istalgan kun uchun belgilay/olib tashlay oladi.
+
+## Bosh admin → filial adminlari
+
+`chief.sql` ni SQL Editor'da ishga tushiring (shift.sql dan keyin) va bot kodini yangilab Deploy qiling.
+
+- **Topshiriq:** Admin panel → Topshiriq berish → «Kimga» ro'yxatidagi **Filial adminlari** guruhidan tanlang. Filial admini uni «Topshiriqlar» sahifasining yuqorisida («Bosh admindan topshiriqlar») va botda ko'radi, «Bajarildi» bosadi — bosh adminga xabar keladi.
+- **Xabar:** Xabarlar → Xabar yuborish → «🧑‍💼 Barcha filial adminlariga» yoki bitta filial admini. Filial admini uni «Xabarlar → Bosh admindan» bo'limida, 🔔, telefon va Telegram'da oladi; kim o'qiganini ko'rasiz. Botda: `/xabar` → «Filial adminlariga».

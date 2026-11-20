@@ -266,7 +266,7 @@ function adminSummary(c: Ctx, title: string, full?: Ctx) {
   if (overdue.length) txt += "\n\n⏰ <b>Muddati o‘tgan topshiriqlar</b>\n" + overdue.slice(0, 10).map((k: any) => `• ${esc(k.title)} — ${esc(assignee(c, k))} (${fmt(k.deadline)})`).join("\n");
   return txt;
 }
-function assignee(c: Ctx, k: any) { const p = k.type === "teacher" ? byId(c.S.teachers, k.assigneeId) : byId(c.S.staff, k.assigneeId); return p ? p.name : "—"; }
+function assignee(c: Ctx, k: any) { if (k.type === "admin") { const a = c.all.find((x) => x.username === k.assigneeId); const b = a && a.branch_id ? byId(c.S.branches, a.branch_id) : null; return `${k.assigneeId} (filial admini${b ? ", " + b.name : ""})`; } const p = k.type === "teacher" ? byId(c.S.teachers, k.assigneeId) : byId(c.S.staff, k.assigneeId); return p ? p.name : "—"; }
 function personOf(c: Ctx, a: any) { return a.role === "teacher" ? byId(c.S.teachers, a.person_id) : a.role === "staff" ? byId(c.S.staff, a.person_id) : null; }
 function helpText(role: string) {
   const common = "/reyting — ustozlar va filiallar reytingi\n/chiqish — Telegramni hisobdan uzish\n/bekor — boshlangan amalni bekor qilish";
@@ -349,12 +349,14 @@ function kindButtons(prefix: string): Btn[][] {
 }
 function annTargets(c: Ctx, own?: string | null): Btn[][] {
   const rows: Btn[][] = [[{ text: own ? "👥 Filialimdagi hammaga" : "👥 Hammaga", callback_data: "x:all" }], [{ text: "👩‍🏫 Ustozlarga", callback_data: "x:teachers" }, { text: "🧹 Xodimlarga", callback_data: "x:staff" }]];
+  if (!own && c.all.some((a) => a.role === "admin" && a.branch_id)) rows.push([{ text: "🧑‍💼 Filial adminlariga", callback_data: "x:admins" }]);
   if (!own) for (const b of c.S.branches) rows.push([{ text: `🏢 ${b.name}`.slice(0, 40), callback_data: `x:branch:${b.id}`.slice(0, 64) }]);
   rows.push([{ text: "❌ Bekor", callback_data: "x:cancel" }]);
   return rows;
 }
 function targetLabel(c: Ctx, target: string) {
   if (target === "all") return "Hammaga (ustoz va xodimlar)";
+  if (target === "admins") return "Barcha filial adminlariga";
   if (target === "teachers") return "Barcha ustozlarga";
   if (target === "staff") return "Barcha xodimlarga";
   if (target.startsWith("branch:")) { const b = byId(c.S.branches, target.slice(7)); return (b ? b.name : "Filial") + " filialiga"; }
@@ -467,6 +469,7 @@ async function onMessage(msg: any) {
     if (cmd === "/topshiriqlar") {
       const T = today(); const od = cs.S.tasks.filter((k: any) => k.status !== "bajarildi" && k.deadline < T);
       const open = cs.S.tasks.filter((k: any) => k.status !== "bajarildi").length;
+      if (acc.branch_id) { const my = myTasks(c, "admin", acc.username); if (my.btns.length) await send(chat, "🧑‍💼 <b>Bosh admindan</b>\n" + my.text, my.btns); }
       return send(chat, `📌 Ochiq topshiriqlar: <b>${open}</b>, muddati o‘tgan: <b>${od.length}</b>\n\n` + od.map((k: any) => `🔴 ${esc(k.title)} — ${esc(assignee(c, k))} (${fmt(k.deadline)})`).join("\n"));
     }
     if (cmd === "/ustoz") {
@@ -529,7 +532,8 @@ async function onCallback(q: any) {
       await rpc("set_task_status", { p_token: token, p_task_id: data.slice(2), p_status: "bajarildi" });
       await answer("Topshiriq bajarildi deb belgilandi ✅");
       const c = await loadCtx(); const p = personOf(c, acc);
-      if (p) { const m = myTasks(c, acc.role, p.id); await edit(chat, msgId, m.text, m.btns); }
+      if (acc.role === "admin") { const m = myTasks(c, "admin", acc.username); await edit(chat, msgId, m.text, m.btns); }
+      else if (p) { const m = myTasks(c, acc.role, p.id); await edit(chat, msgId, m.text, m.btns); }
       return;
     }
     if (data.startsWith("m:") || data.startsWith("p:")) {
@@ -653,7 +657,7 @@ async function jobReminders() {
   // Topshiriq muddati bugun tugaydi (soat 15:00 dan keyin bir marta)
   if (now >= 15 * 60) {
     for (const k of c.S.tasks.filter((k: any) => k.status !== "bajarildi" && k.deadline === T)) {
-      const a = c.all.find((x) => x.role === k.type && x.person_id === k.assigneeId); if (!a) continue;
+      const a = k.type === "admin" ? c.all.find((x) => x.username === k.assigneeId) : c.all.find((x) => x.role === k.type && x.person_id === k.assigneeId); if (!a) continue;
       if (!(await once(`k|${T}|${k.id}`))) continue;
       await deliver(c, [a], { kind: "task", title: "⏳ Topshiriq muddati bugun tugaydi", body: k.title, link: "topshiriqlar" },
         { text: `⏳ <b>Topshiriq muddati bugun tugaydi</b>\n${esc(k.title)}`, btns: [[{ text: "✅ Bajarildi", callback_data: `k:${k.id}` }]] });
@@ -673,7 +677,7 @@ async function jobDiff(old: any) {
   const confComp = S.complaints.filter((x: any) => x.status === "tasdiqlangan" && old.complaints && old.complaints[x.id] && old.complaints[x.id] !== "tasdiqlangan");
   // Demo yuklash kabi ommaviy o'zgarishlarda xabar yubormaymiz
   if (newTasks.length + newEvals.length + newRatings.length + newComp.length > 15) return;
-  const accOf = (type: string, pid: string) => c.all.find((a) => a.role === type && a.person_id === pid);
+  const accOf = (type: string, pid: string) => type === "admin" ? c.all.find((a) => a.username === pid) : c.all.find((a) => a.role === type && a.person_id === pid);
   for (const k of newTasks) {
     await deliver(c, [accOf(k.type, k.assigneeId)], { kind: "task", title: "📌 Yangi topshiriq", body: `${k.title} · muddat: ${fmt(k.deadline)}`, link: "topshiriqlar" },
       { text: `📌 <b>Yangi topshiriq</b>\n${esc(k.title)}${k.desc ? `\n<i>${esc(k.desc)}</i>` : ""}\n\nMuddat: <b>${fmt(k.deadline)}</b> · muhimlik: ${esc(k.priority)}`, btns: [[{ text: "✅ Bajarildi", callback_data: `k:${k.id}` }]] });
