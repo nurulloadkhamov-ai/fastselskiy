@@ -377,7 +377,9 @@ function viewTasks(){
     h+='<div class="card" style="margin-bottom:16px;border-color:#F3C76B;background:#FFFBF2"><h3>Bosh admindan topshiriqlar'+(mine.length?' ('+mine.length+')':'')+'</h3>'+(mine.length?mine.map(function(k){return '<div class="list-item flex between"><div><b>'+esc(k.title)+'</b>'+(k.desc?'<div class="muted small">'+esc(k.desc)+'</div>':'')+'<div class="muted small">Muddat: '+fmtDate(k.deadline)+' · '+prBadge(k.priority)+'</div></div><div class="flex">'+tBadge(k)+(k.status==="yangi"?'<button class="btn sm" data-act="taskSt" data-id="'+k.id+'" data-v="jarayonda">Boshlash</button>':'')+'<button class="btn sm pri" data-act="taskSt" data-id="'+k.id+'" data-v="bajarildi">Bajarildi</button></div></div>';}).join(""):'<div class="empty small">Ochiq topshiriq yo\'q 👌</div>')+'</div>';}
   h+='<div class="tabs">'+f.map(function(t){return '<button class="tab'+(ui.taskFilter===t[0]?" on":"")+'" data-act="taskFilter" data-id="'+t[0]+'">'+t[1]+'</button>';}).join("")+'</div>';
   h+='<div class="card scroll"><table><thead><tr><th>Topshiriq</th>'+(isAdmin()?'<th>Kimga</th>':'')+'<th>Muhimlik</th><th>Muddat</th><th>Holat</th><th></th></tr></thead><tbody>'+
-   list.map(function(k){return '<tr><td><b>'+esc(k.title)+'</b>'+(k.desc?'<div class="muted small">'+esc(k.desc)+'</div>':'')+'</td>'+(isAdmin()?'<td>'+esc(assigneeName(k))+'</td>':'')+'<td>'+prBadge(k.priority)+'</td><td class="muted">'+fmtDate(k.deadline)+'</td><td>'+tBadge(k)+'</td><td class="num" style="white-space:nowrap">'+
+   (isAdmin()?groupTasks(list):list.map(function(k){return {one:k};})).map(function(r){
+     if(!r.one){var g=r,pr=groupProgress(g),op=ui.openGroup===g.id;return '<tr><td><b>'+esc(g.first.title)+'</b>'+(g.first.desc?'<div class="muted small">'+esc(g.first.desc)+'</div>':'')+'</td><td>👥 '+esc(g.label)+' <span class="muted small">('+pr.n+' kishi)</span></td><td>'+prBadge(g.first.priority)+'</td><td class="muted">'+fmtDate(g.first.deadline)+'</td><td><span class="badge '+pr.cls+'">'+pr.d+' / '+pr.n+' bajardi</span></td><td class="num"><button class="btn sm" data-act="openGroup" data-id="'+esc(g.id)+'">'+(op?"Yopish":"Kim bajardi?")+'</button></td></tr>'+(op?groupDetail(g):'');}
+     var k=r.one;return '<tr><td><b>'+esc(k.title)+'</b>'+(k.desc?'<div class="muted small">'+esc(k.desc)+'</div>':'')+'</td>'+(isAdmin()?'<td>'+esc(assigneeName(k))+'</td>':'')+'<td>'+prBadge(k.priority)+'</td><td class="muted">'+fmtDate(k.deadline)+'</td><td>'+tBadge(k)+'</td><td class="num" style="white-space:nowrap">'+
      (k.status==="yangi"?'<button class="btn sm" data-act="taskSt" data-id="'+k.id+'" data-v="jarayonda">Boshlash</button> ':'')+(k.status!=="bajarildi"?'<button class="btn sm pri" data-act="taskSt" data-id="'+k.id+'" data-v="bajarildi">Bajarildi</button>':(isAdmin()?'<button class="btn sm" data-act="taskSt" data-id="'+k.id+'" data-v="jarayonda">Qayta ochish</button>':''))+'</td></tr>';}).join("")+
   '</tbody></table>'+(list.length?'':'<div class="empty">Topshiriqlar yo\'q</div>')+'</div>';
   return h;
@@ -589,12 +591,58 @@ function admEval(){
   h+='<div class="grid g2 mt"><div class="card"><h3>Tanlangan ustoz kuzatuvlari</h3>'+(ev.length?ev.map(function(e){return '<div class="list-item flex between"><span>'+fmtDate(e.date)+' — <b>'+r1(evalScore(e))+'</b> <span class="muted small">('+e.c.join(", ")+')</span></span>'+delBtn("evals",e.id)+'</div>';}).join(""):'<div class="empty">Yo\'q</div>')+'</div><div class="card"><h3>Tanlangan ustoz baholari</h3>'+(rt.length?rt.map(function(e){return '<div class="list-item flex between"><span>'+fmtDate(e.date)+' — '+esc(e.work)+' <b>'+e.score+'/10</b></span>'+delBtn("ratings",e.id)+'</div>';}).join(""):'<div class="empty">Yo\'q</div>')+'</div></div>';
   return h;
 }
+/* Guruh topshiriq: qabul qiluvchilar ro'yxati */
+function taskGroupTargets(){
+  var o=[["g:all",isMainAdmin()?"👥 Hammaga (ustoz va xodimlar)":"👥 Filialimdagi hammaga"],["g:teachers","👩‍🏫 Barcha ustozlarga"],["g:staff","🧹 Barcha xodimlarga"]];
+  Object.keys(ROLES).forEach(function(r){o.push(["g:role:"+r,"🧹 Barcha "+ROLES[r]+"larga"]);});
+  if(isMainAdmin()&&branchAdmins().length)o.push(["g:admins","🧑‍💼 Barcha filial adminlariga"]);
+  return o;
+}
+function groupAssignees(target,branch){
+  var inB=function(p){return inScope(p.branchId)&&(!branch||p.branchId===branch);},out=[];
+  var tt=scT().filter(inB),ss=scS().filter(inB);
+  if(target==="g:all"){tt.forEach(function(t){out.push(["teacher",t.id]);});ss.forEach(function(x){out.push(["staff",x.id]);});}
+  else if(target==="g:teachers")tt.forEach(function(t){out.push(["teacher",t.id]);});
+  else if(target==="g:staff")ss.forEach(function(x){out.push(["staff",x.id]);});
+  else if(target.indexOf("g:role:")===0){var r=target.slice(7);ss.filter(function(x){return x.role===r;}).forEach(function(x){out.push(["staff",x.id]);});}
+  else if(target==="g:admins"&&isMainAdmin())branchAdmins().filter(function(a){return !branch||a.branch_id===branch;}).forEach(function(a){out.push(["admin",a.username]);});
+  return out;
+}
+function groupLabelOf(target,branch){
+  var t=(taskGroupTargets().filter(function(x){return x[0]===target;})[0]||[0,target])[1].replace(/^\S+ /,"");
+  return (branch?branchName(branch)+" filiali: ":"")+t;
+}
+function taskVisible(k){if(k.type==="admin")return isMainAdmin();var p=k.type==="teacher"?byId(S.teachers,k.assigneeId):byId(S.staff,k.assigneeId);return !p||inScope(p.branchId);}
+/* Ro'yxatni guruhlarga yig'ish: bir guruh topshiriqlari bitta qatorda */
+function groupTasks(list){
+  var seen={},rows=[];
+  list.forEach(function(k){
+    if(!k.groupId){rows.push({one:k});return;}
+    if(!seen[k.groupId]){seen[k.groupId]={group:true,id:k.groupId,label:k.groupLabel||"Guruh",first:k,items:[]};rows.push(seen[k.groupId]);}
+  });
+  rows.forEach(function(r){if(r.group)r.items=S.tasks.filter(function(k){return k.groupId===r.id&&taskVisible(k);});});
+  return rows;
+}
+function groupProgress(g){var d=g.items.filter(function(k){return k.status==="bajarildi";}).length,n=g.items.length;return {d:d,n:n,cls:d===n?"b-good":(g.first.deadline<todayISO()?"b-bad":"b-warn")};}
+function groupDetail(g){
+  return '<tr><td colspan="6" style="background:var(--surface2)"><div class="grid g3" style="gap:8px">'+g.items.map(function(k){return '<div class="flex between" style="background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 10px"><span class="small"><b>'+esc(assigneeName(k).split(" · ")[0])+'</b></span>'+tBadge(k)+'</div>';}).join("")+'</div></td></tr>';
+}
 function admTasks(){
   var T=todayISO();
   if(!scT().length&&!scS().length&&!(isMainAdmin()&&branchAdmins().length))return '<div class="card empty">Avval ustoz yoki xodim qo\'shing</div>';
-  var h='<div class="card"><h3>Yangi topshiriq</h3><p class="sub">Ustoz, xodim'+(isMainAdmin()?' yoki filial adminiga':'ga')+' topshiriq bering — bajarilishi ustoz reytingiga ta\'sir qiladi</p><form class="form" data-form="task"><div class="row"><label>Kimga<select class="in" name="who" required><optgroup label="Ustozlar">'+scT().map(function(t){return '<option value="teacher:'+t.id+'">'+esc(t.name)+' — '+esc(branchName(t.branchId))+'</option>';}).join("")+'</optgroup><optgroup label="Xodimlar">'+scS().map(function(t){return '<option value="staff:'+t.id+'">'+esc(t.name)+' — '+ROLES[t.role]+'</option>';}).join("")+'</optgroup>'+(isMainAdmin()&&branchAdmins().length?'<optgroup label="Filial adminlari">'+branchAdmins().map(function(a){return '<option value="admin:'+esc(a.username)+'">🧑‍💼 '+esc(a.username)+' — '+esc(branchName(a.branch_id))+' filial admini</option>';}).join("")+'</optgroup>':'')+'</select></label><label>Muddat<input class="in" type="date" name="deadline" value="'+addDays(T,3)+'" required></label><label>Muhimlik<select class="in" name="priority"><option value="yuqori">Yuqori</option><option value="o\'rta" selected>O\'rta</option><option value="past">Past</option></select></label></div><label>Topshiriq<input class="in" name="title" required></label><label>Tavsif<textarea class="in" name="desc"></textarea></label><button class="btn pri" type="submit" style="justify-self:start">Topshiriq berish</button></form></div>';
+  var gt=taskGroupTargets();
+  var h='<div class="card"><h3>Yangi topshiriq</h3><p class="sub">Bitta odamga yoki bir yo\'la butun filial / bo\'limga bering. Har bir kishi o\'z nusxasini alohida bajaradi — bajarilishi ustoz reytingiga ta\'sir qiladi.</p><form class="form" data-form="task"><div class="row"><label>Kimga<select class="in" name="who" required><optgroup label="Guruhga (bir yo\'la)">'+gt.map(function(o){return '<option value="'+o[0]+'"'+'>'+esc(o[1])+'</option>';}).join("")+'</optgroup><optgroup label="Ustozlar">'+scT().map(function(t){return '<option value="teacher:'+t.id+'"'+'>'+esc(t.name)+' — '+esc(branchName(t.branchId))+'</option>';}).join("")+'</optgroup><optgroup label="Xodimlar">'+scS().map(function(t){return '<option value="staff:'+t.id+'"'+'>'+esc(t.name)+' — '+ROLES[t.role]+', '+esc(branchName(t.branchId))+'</option>';}).join("")+'</optgroup>'+(isMainAdmin()&&branchAdmins().length?'<optgroup label="Filial adminlari">'+branchAdmins().map(function(a){return '<option value="admin:'+esc(a.username)+'"'+'>🧑‍💼 '+esc(a.username)+' — '+esc(branchName(a.branch_id))+' filial admini</option>';}).join("")+'</optgroup>':'')+'</select></label>'+
+    (isMainAdmin()?'<label>Qaysi filial (guruh uchun)<select class="in" name="gbranch"><option value="">Barcha filiallar</option>'+S.branches.map(function(b){return '<option value="'+b.id+'">'+esc(b.name)+'</option>';}).join("")+'</select></label>':'')+
+    '<label>Muddat<input class="in" type="date" name="deadline" value="'+addDays(T,3)+'" required></label><label>Muhimlik<select class="in" name="priority"><option value="yuqori">Yuqori</option><option value="o\'rta" selected>O\'rta</option><option value="past">Past</option></select></label></div>';
+  h+='<div class="small" style="margin-top:-4px"><span class="badge b-pri" id="taskCount">'+groupAssignees(gt[0][0],"").length+' kishiga beriladi</span></div>';
+  h+='<label>Topshiriq<input class="in" name="title" required></label><label>Tavsif<textarea class="in" name="desc"></textarea></label><button class="btn pri" type="submit" style="justify-self:start">Topshiriq berish</button></form></div>';
   var list=S.tasks.filter(function(k){if(k.type==="admin")return isMainAdmin();var p=k.type==="teacher"?byId(S.teachers,k.assigneeId):byId(S.staff,k.assigneeId);return !p||inScope(p.branchId);}).sort(function(a,b){return a.deadline<b.deadline?1:-1;});
-  h+='<div class="card mt scroll"><h3>Barcha topshiriqlar</h3><table><thead><tr><th>Topshiriq</th><th>Kimga</th><th>Muddat</th><th>Holat</th><th></th></tr></thead><tbody>'+list.map(function(k){return '<tr><td><b>'+esc(k.title)+'</b></td><td>'+esc(assigneeName(k))+'</td><td class="muted">'+fmtDate(k.deadline)+'</td><td><select class="in" data-act-change="taskSel" data-id="'+k.id+'">'+["yangi","jarayonda","bajarildi"].map(function(v){return '<option value="'+v+'"'+(k.status===v?" selected":"")+'>'+{yangi:"Yangi",jarayonda:"Jarayonda",bajarildi:"Bajarildi"}[v]+'</option>';}).join("")+'</select></td><td class="num">'+delBtn("tasks",k.id)+'</td></tr>';}).join("")+'</tbody></table></div>';
+  var rows=groupTasks(list);
+  h+='<div class="card mt scroll"><h3>Barcha topshiriqlar</h3><table><thead><tr><th>Topshiriq</th><th>Kimga</th><th>Muddat</th><th>Holat</th><th></th><th></th></tr></thead><tbody>'+rows.map(function(r){
+    if(r.one){var k=r.one;return '<tr><td><b>'+esc(k.title)+'</b></td><td>'+esc(assigneeName(k))+'</td><td class="muted">'+fmtDate(k.deadline)+'</td><td><select class="in" data-act-change="taskSel" data-id="'+k.id+'">'+["yangi","jarayonda","bajarildi"].map(function(v){return '<option value="'+v+'"'+(k.status===v?" selected":"")+'>'+{yangi:"Yangi",jarayonda:"Jarayonda",bajarildi:"Bajarildi"}[v]+'</option>';}).join("")+'</select></td><td></td><td class="num">'+delBtn("tasks",k.id)+'</td></tr>';}
+    var g=r,pr=groupProgress(g),open=ui.openGroup===g.id;
+    return '<tr><td><b>'+esc(g.first.title)+'</b></td><td>👥 '+esc(g.label)+' <span class="muted small">('+pr.n+' kishi)</span></td><td class="muted">'+fmtDate(g.first.deadline)+'</td><td><span class="badge '+pr.cls+'">'+pr.d+' / '+pr.n+' bajardi</span></td><td><button class="btn sm" data-act="openGroup" data-id="'+esc(g.id)+'">'+(open?"Yopish":"Kim bajardi?")+'</button></td><td class="num">'+delBtn("taskgroup",g.id)+'</td></tr>'+(open?groupDetail(g):'');
+  }).join("")+'</tbody></table>'+(rows.length?'':'<div class="empty">Topshiriqlar yo\'q</div>')+'</div>';
   return h;
 }
 function admDuties(){
@@ -732,6 +780,7 @@ document.addEventListener("click",function(e){
     ui.armed=null;
     if(coll==="account"){rpc("delete_account",{p_token:AUTH.token,p_username:id}).then(function(){toast("Login o'chirildi");}).catch(function(err){toast(err.message,true);}).finally(refreshAccounts);return;}
     commit(function(D){
+      if(coll==="taskgroup"){D.tasks=D.tasks.filter(function(x){return x.groupId!==id;});stampComplaintCounts(D);return;}
       D[coll]=D[coll].filter(function(x){return x.id!==id;});
       if(coll==="teachers"){["evals","ratings","complaints"].forEach(function(c){D[c]=D[c].filter(function(x){return x.teacherId!==id;});});D.tasks=D.tasks.filter(function(k){return !(k.type==="teacher"&&k.assigneeId===id);});}
       if(coll==="staff"){D.duties=D.duties.filter(function(d){return d.staffId!==id;});D.tasks=D.tasks.filter(function(k){return !(k.type==="staff"&&k.assigneeId===id);});}
@@ -740,12 +789,16 @@ document.addEventListener("click",function(e){
     },"O'chirildi").then(function(ok){if(ok&&(coll==="teachers"||coll==="staff"))deleteAccountsOf(id);});
     return;}
   if(a==="shiftToggle"){commit(function(D){var x=byId(D.staff,id);if(x)x.shift=!x.shift;},"Ish tartibi o'zgartirildi");return;}
+  if(a==="openGroup"){ui.openGroup=ui.openGroup===id?null:id;render();return;}
   if(a==="stdDuties"){var s=byId(S.staff,ui.admStaff);if(!s)return;var nd=defaultDuties(s.role).map(function(d){return {id:uid("d"),staffId:s.id,time:d[0],title:d[1],days:[1,2,3,4,5,6]};});commit(function(D){nd.forEach(function(x){D.duties.push(x);});},"Standart vazifalar qo'shildi");return;}
   if(a==="wipe"){if(ui.armed!=="wipe"){ui.armed="wipe";render();return;}ui.armed=null;var w=emptyData();w.settings=S.settings;w.branches=S.branches.map(function(b){return {id:b.id,name:b.name,students:[]};});seedServer({data:w,logs:{}});return;}
   if(a==="reseed"){if(ui.armed!=="reseed"){ui.armed="reseed";render();return;}ui.armed=null;var pk=seed();pk.data.settings=S.settings;seedServer(pk);return;}
 });
 document.addEventListener("input",function(e){if(e.target.getAttribute("data-model")==="tSearch"){ui.tSearch=e.target.value;render();}});
+function updateTaskCount(f){var el=document.getElementById("taskCount");if(!el||!f)return;var w=f.querySelector("[name=who]").value,b=f.querySelector("[name=gbranch]");
+  if(w.indexOf("g:")===0){var n=groupAssignees(w,b?b.value:"").length;el.textContent=n+" kishiga beriladi";el.className="badge "+(n?"b-pri":"b-warn");}else{el.textContent="1 kishiga beriladi";el.className="badge b-neu";}}
 document.addEventListener("change",function(e){
+  var tf=e.target.closest&&e.target.closest("form[data-form=task]");if(tf&&(e.target.name==="who"||e.target.name==="gbranch")){updateTaskCount(tf);return;}
   var m=e.target.getAttribute("data-model");
   if(m&&m!=="tSearch"){ui[m]=e.target.value;if(m==="sDate"&&(!ui.sDate||ui.sDate>todayISO()))ui.sDate=todayISO();render();return;}
   var ac=e.target.getAttribute("data-act-change");if(!ac||!isAdmin())return;var id=e.target.getAttribute("data-id"),v=e.target.value;
@@ -784,7 +837,12 @@ document.addEventListener("submit",async function(e){
   if(kind==="eval"){var ev={id:uid("e"),teacherId:ui.admTeacher,date:g("date"),c:[n("c0",1,10),n("c1",1,10),n("c2",1,10),n("c3",1,10)],note:g("note"),by:me().username};ok=await commit(function(D){D.evals.push(ev);},"Dars kuzatuvi saqlandi");}
   else if(kind==="rating"){var rt={id:uid("r"),teacherId:ui.admTeacher,date:g("date"),score:n("score",1,10),work:g("work"),comment:g("comment")};ok=await commit(function(D){D.ratings.push(rt);},"Reyting berildi");}
   else if(kind==="complaint"){var cp={id:uid("c"),teacherId:ui.admTeacher,date:g("date"),source:g("source"),text:g("text"),status:"yangi"};ok=await commit(function(D){D.complaints.push(cp);},"Shikoyat qo'shildi");}
-  else if(kind==="task"){var w=g("who").split(":");if(!w[1])return;var tk={id:uid("k"),type:w[0],assigneeId:w[1],title:g("title"),desc:g("desc"),deadline:g("deadline"),priority:g("priority"),status:"yangi",created:todayISO(),doneAt:null};ok=await commit(function(D){D.tasks.push(tk);},"Topshiriq berildi");}
+  else if(kind==="task"){var who=g("who");
+    if(who.indexOf("g:")===0){var gb=isMainAdmin()?g("gbranch"):"";var as=groupAssignees(who,gb);if(!as.length){toast("Bu guruhda hech kim yo'q",true);return;}
+      var gid=uid("g"),glabel=groupLabelOf(who,gb),base={title:g("title"),desc:g("desc"),deadline:g("deadline"),priority:g("priority"),status:"yangi",created:todayISO(),doneAt:null,groupId:gid,groupLabel:glabel};
+      var tks=as.map(function(x){return Object.assign({id:uid("k"),type:x[0],assigneeId:x[1]},base);});
+      ok=await commit(function(D){tks.forEach(function(t){D.tasks.push(t);});},"Topshiriq "+tks.length+" kishiga berildi");}
+    else{var w=who.split(":");if(!w[1])return;var tk={id:uid("k"),type:w[0],assigneeId:w.slice(1).join(":"),title:g("title"),desc:g("desc"),deadline:g("deadline"),priority:g("priority"),status:"yangi",created:todayISO(),doneAt:null};ok=await commit(function(D){D.tasks.push(tk);},"Topshiriq berildi");}}
   else if(kind==="duty"){var days=[0,1,2,3,4,5,6].filter(function(d){return fd.get("d"+d);});if(!days.length){toast("Kamida bitta kunni tanlang",true);return;}var du={id:uid("d"),staffId:ui.admStaff,time:g("time"),title:g("title"),days:days};ok=await commit(function(D){D.duties.push(du);},"Vazifa qo'shildi");}
   else if(kind==="teacher"){var t={id:uid("t"),name:g("name"),branchId:g("branchId"),subject:g("subject"),cpConf90:0};ok=await commit(function(D){D.teachers.push(t);},"Ustoz qo'shildi");if(ok&&g("lu"))await createLogin(g("lu"),g("lp"),"teacher",t.id);}
   else if(kind==="staff"){var s={id:uid("s"),name:g("name"),role:g("role"),branchId:g("branchId"),shift:!!fd.get("shift")};var sd=fd.get("std")?defaultDuties(s.role).map(function(d){return {id:uid("d"),staffId:s.id,time:d[0],title:d[1],days:[1,2,3,4,5,6]};}):[];ok=await commit(function(D){D.staff.push(s);sd.forEach(function(x){D.duties.push(x);});},"Xodim qo'shildi");if(ok&&g("lu"))await createLogin(g("lu"),g("lp"),"staff",s.id);}

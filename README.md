@@ -79,3 +79,7 @@ Saytdagi 🔔 qo'ng'iroqcha hammada avtomatik ishlaydi: yangi topshiriq, baho, s
 
 - **Topshiriq:** Admin panel → Topshiriq berish → «Kimga» ro'yxatidagi **Filial adminlari** guruhidan tanlang. Filial admini uni «Topshiriqlar» sahifasining yuqorisida («Bosh admindan topshiriqlar») va botda ko'radi, «Bajarildi» bosadi — bosh adminga xabar keladi.
 - **Xabar:** Xabarlar → Xabar yuborish → «🧑‍💼 Barcha filial adminlariga» yoki bitta filial admini. Filial admini uni «Xabarlar → Bosh admindan» bo'limida, 🔔, telefon va Telegram'da oladi; kim o'qiganini ko'rasiz. Botda: `/xabar` → «Filial adminlariga».
+
+## Guruh topshiriqlari
+
+Admin panel → Topshiriq berish → «Kimga» ro'yxatining **Guruhga (bir yo'la)** qismi: hammaga, barcha ustozlarga, barcha xodimlarga, lavozim bo'yicha (Receptionist / Cleaner / Academic support), bosh admin uchun — barcha filial adminlariga. Bosh admin «Qaysi filial» bilan guruhni bitta filialga cheklaydi. Har bir kishi o'z nusxasini bajaradi; ro'yxatda «5 / 8 bajardi» va «Kim bajardi?» ko'rinadi. SQL o'zgarishi yo'q — faqat sayt va bot kodi.

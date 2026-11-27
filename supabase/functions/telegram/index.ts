@@ -676,15 +676,18 @@ async function jobDiff(old: any) {
   const newComp = S.complaints.filter((x: any) => !(x.id in (old.complaints || {})));
   const confComp = S.complaints.filter((x: any) => x.status === "tasdiqlangan" && old.complaints && old.complaints[x.id] && old.complaints[x.id] !== "tasdiqlangan");
   // Demo yuklash kabi ommaviy o'zgarishlarda xabar yubormaymiz
-  if (newTasks.length + newEvals.length + newRatings.length + newComp.length > 15) return;
+  if (new Set(newTasks.map((k: any) => k.groupId || k.id)).size + newEvals.length + newRatings.length + newComp.length > 15) return;
   const accOf = (type: string, pid: string) => type === "admin" ? c.all.find((a) => a.username === pid) : c.all.find((a) => a.role === type && a.person_id === pid);
   for (const k of newTasks) {
     await deliver(c, [accOf(k.type, k.assigneeId)], { kind: "task", title: "📌 Yangi topshiriq", body: `${k.title} · muddat: ${fmt(k.deadline)}`, link: "topshiriqlar" },
       { text: `📌 <b>Yangi topshiriq</b>\n${esc(k.title)}${k.desc ? `\n<i>${esc(k.desc)}</i>` : ""}\n\nMuddat: <b>${fmt(k.deadline)}</b> · muhimlik: ${esc(k.priority)}`, btns: [[{ text: "✅ Bajarildi", callback_data: `k:${k.id}` }]] });
   }
   for (const k of doneTasks) {
-    await deliver(c, adminsFor(c, personBranch(c, k.type, k.assigneeId), true), { kind: "task", title: "✅ Topshiriq bajarildi", body: `${k.title} — ${assignee(c, k)}`, link: "topshiriqlar" },
-      { text: `✅ <b>Topshiriq bajarildi</b>\n${esc(k.title)} — ${esc(assignee(c, k))}` });
+    // Guruh topshirig'ida: necha kishi bajargani ham ko'rsatiladi
+    const grp = k.groupId ? S.tasks.filter((x: any) => x.groupId === k.groupId) : null;
+    const prog = grp ? ` (${grp.filter((x: any) => x.status === "bajarildi").length}/${grp.length} · ${k.groupLabel || "guruh"})` : "";
+    await deliver(c, adminsFor(c, personBranch(c, k.type, k.assigneeId), true), { kind: "task", title: "✅ Topshiriq bajarildi" + prog, body: `${k.title} — ${assignee(c, k)}`, link: "topshiriqlar" },
+      { text: `✅ <b>Topshiriq bajarildi</b>${esc(prog)}\n${esc(k.title)} — ${esc(assignee(c, k))}` });
   }
   for (const e of newEvals) {
     await deliver(c, [accOf("teacher", e.teacherId)], { kind: "eval", title: `📝 Darsingiz baholandi: ${r1(avg(e.c))}/10`, body: `Tayyorgarlik ${e.c[0]} · Metodika ${e.c[1]} · Faollik ${e.c[2]} · Vaqt ${e.c[3]}${e.note ? " — " + e.note : ""}`, link: "ustozlar" },
