@@ -595,10 +595,13 @@ function admEval(){
 function taskGroupTargets(){
   var o=[["g:all",isMainAdmin()?"👥 Hammaga (ustoz va xodimlar)":"👥 Filialimdagi hammaga"],["g:teachers","👩‍🏫 Barcha ustozlarga"],["g:staff","🧹 Barcha xodimlarga"]];
   Object.keys(ROLES).forEach(function(r){o.push(["g:role:"+r,"🧹 Barcha "+ROLES[r]+"larga"]);});
+  if(isMainAdmin()){S.branches.forEach(function(b){o.push(["g:branch:"+b.id,"🏢 "+b.name+" filialiga (hammaga)"]);o.push(["g:bteach:"+b.id,"🏢 "+b.name+" — ustozlariga"]);o.push(["g:bstaff:"+b.id,"🏢 "+b.name+" — xodimlariga"]);});}
   if(isMainAdmin()&&branchAdmins().length)o.push(["g:admins","🧑‍💼 Barcha filial adminlariga"]);
   return o;
 }
 function groupAssignees(target,branch){
+  var m=/^g:(branch|bteach|bstaff):(.+)$/.exec(target);
+  if(m){branch=m[2];target=m[1]==="branch"?"g:all":m[1]==="bteach"?"g:teachers":"g:staff";}
   var inB=function(p){return inScope(p.branchId)&&(!branch||p.branchId===branch);},out=[];
   var tt=scT().filter(inB),ss=scS().filter(inB);
   if(target==="g:all"){tt.forEach(function(t){out.push(["teacher",t.id]);});ss.forEach(function(x){out.push(["staff",x.id]);});}
@@ -609,6 +612,7 @@ function groupAssignees(target,branch){
   return out;
 }
 function groupLabelOf(target,branch){
+  if(/^g:(branch|bteach|bstaff):/.test(target))return (taskGroupTargets().filter(function(x){return x[0]===target;})[0]||[0,target])[1].replace(/^\S+ /,"");
   var t=(taskGroupTargets().filter(function(x){return x[0]===target;})[0]||[0,target])[1].replace(/^\S+ /,"");
   return (branch?branchName(branch)+" filiali: ":"")+t;
 }
@@ -796,7 +800,8 @@ document.addEventListener("click",function(e){
 });
 document.addEventListener("input",function(e){if(e.target.getAttribute("data-model")==="tSearch"){ui.tSearch=e.target.value;render();}});
 function updateTaskCount(f){var el=document.getElementById("taskCount");if(!el||!f)return;var w=f.querySelector("[name=who]").value,b=f.querySelector("[name=gbranch]");
-  if(w.indexOf("g:")===0){var n=groupAssignees(w,b?b.value:"").length;el.textContent=n+" kishiga beriladi";el.className="badge "+(n?"b-pri":"b-warn");}else{el.textContent="1 kishiga beriladi";el.className="badge b-neu";}}
+  if(b)b.disabled=w.indexOf("g:")!==0||/^g:(branch|bteach|bstaff):/.test(w);
+  if(w.indexOf("g:")===0){var n=groupAssignees(w,b&&!b.disabled?b.value:"").length;el.textContent=n+" kishiga beriladi";el.className="badge "+(n?"b-pri":"b-warn");}else{el.textContent="1 kishiga beriladi";el.className="badge b-neu";}}
 document.addEventListener("change",function(e){
   var tf=e.target.closest&&e.target.closest("form[data-form=task]");if(tf&&(e.target.name==="who"||e.target.name==="gbranch")){updateTaskCount(tf);return;}
   var m=e.target.getAttribute("data-model");
@@ -838,7 +843,7 @@ document.addEventListener("submit",async function(e){
   else if(kind==="rating"){var rt={id:uid("r"),teacherId:ui.admTeacher,date:g("date"),score:n("score",1,10),work:g("work"),comment:g("comment")};ok=await commit(function(D){D.ratings.push(rt);},"Reyting berildi");}
   else if(kind==="complaint"){var cp={id:uid("c"),teacherId:ui.admTeacher,date:g("date"),source:g("source"),text:g("text"),status:"yangi"};ok=await commit(function(D){D.complaints.push(cp);},"Shikoyat qo'shildi");}
   else if(kind==="task"){var who=g("who");
-    if(who.indexOf("g:")===0){var gb=isMainAdmin()?g("gbranch"):"";var as=groupAssignees(who,gb);if(!as.length){toast("Bu guruhda hech kim yo'q",true);return;}
+    if(who.indexOf("g:")===0){var gb=isMainAdmin()&&!/^g:(branch|bteach|bstaff):/.test(who)?g("gbranch"):"";var as=groupAssignees(who,gb);if(!as.length){toast("Bu guruhda hech kim yo'q",true);return;}
       var gid=uid("g"),glabel=groupLabelOf(who,gb),base={title:g("title"),desc:g("desc"),deadline:g("deadline"),priority:g("priority"),status:"yangi",created:todayISO(),doneAt:null,groupId:gid,groupLabel:glabel};
       var tks=as.map(function(x){return Object.assign({id:uid("k"),type:x[0],assigneeId:x[1]},base);});
       ok=await commit(function(D){tks.forEach(function(t){D.tasks.push(t);});},"Topshiriq "+tks.length+" kishiga berildi");}
